@@ -1,0 +1,3 @@
+# Only rebuildable folders are excluded (GitHub rejects files over 100 MB, and Vercel rebuilds these).
+/node_modules
+/.next
