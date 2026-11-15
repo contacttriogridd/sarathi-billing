@@ -34,6 +34,8 @@ The **first account created becomes the active administrator**. Every later sign
 
 These rules are enforced **in the database** (RLS policies and triggers), not only in the UI.
 
+**Locked out of admin?** For example, an earlier test account became the admin. Sign in with your own account, then run `supabase/make_me_admin.sql` in the SQL Editor. It makes the most recently signed-in account an active admin and lists every account.
+
 ---
 
 ## 2. Run locally
