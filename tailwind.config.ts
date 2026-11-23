@@ -6,6 +6,8 @@ const config: Config = {
     './pages/**/*.{js,ts,jsx,tsx,mdx}',
     './components/**/*.{js,ts,jsx,tsx,mdx}',
     './app/**/*.{js,ts,jsx,tsx,mdx}',
+    // class names also live in lib/ (status badge styles, labour shift colours)
+    './lib/**/*.{js,ts,jsx,tsx}',
   ],
   theme: {
     extend: {

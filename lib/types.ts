@@ -310,6 +310,7 @@ export type Labourer = {
   name: string;
   phone: string;
   trade: string;
+  /** wage per shift (one shift = a normal day's work) */
   daily_wage: number;
   /** per overtime hour */
   overtime_rate: number;
@@ -328,9 +329,12 @@ export type Attendance = {
   labourer_id: string;
   project_id: string | null;
   work_date: string;
+  /** shifts worked: 0 = absent, 0.5, 1, 1.5, 2 … (up to 3) */
+  shifts: number;
+  /** kept in step with shifts by the database: 0 = Absent, under 1 = Half day, otherwise Present */
   status: AttendanceStatus;
   overtime_hours: number;
-  /** rates copied from the labourer when the day was marked */
+  /** rates copied from the labourer when the day was marked; daily_wage is the rate per shift */
   daily_wage: number;
   overtime_rate: number;
   /** wage for the day, computed in the database */

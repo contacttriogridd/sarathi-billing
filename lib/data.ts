@@ -1,7 +1,7 @@
 import { supabase } from '@/lib/supabase';
 import { DEFAULT_SETTINGS, uid } from '@/lib/constants';
 import type {
-  Attendance, AttendanceStatus, AuditLog, CatalogItem, CompanySettings, Customer, Expense, Invoice, Labourer, LabourPayment, LineItem, Payment, Profile, Project, Quotation,
+  Attendance, AuditLog, CatalogItem, CompanySettings, Customer, Expense, Invoice, Labourer, LabourPayment, LineItem, Payment, Profile, Project, Quotation,
 } from '@/lib/types';
 
 // ---------------------------------------------------------------------------
@@ -32,7 +32,7 @@ export const friendlyError = (error: unknown): string => {
   return msg.replace(/^ERROR:\s*/, '');
 };
 
-export const LABOUR_SETUP_MESSAGE = 'Labour attendance needs a one-time database update: run supabase/migrations/20261123120000_labour_attendance.sql in the Supabase SQL Editor (see README).';
+export const LABOUR_SETUP_MESSAGE = 'Labour attendance needs a one-time database update. In the Supabase SQL Editor run supabase/migrations/20261123120000_labour_attendance.sql (skip it if you already have) and then 20261123180000_labour_shift_wages.sql (see README).';
 
 /** True when the labour tables (or expenses.attendance_id) have not been created yet. */
 export const isMissingLabourSchema = (error: unknown) => {
@@ -104,6 +104,11 @@ export const normItem = (r: Record<string, unknown>): LineItem => ({
   amount: n(r.amount),
 });
 
+const ATTENDANCE_COLUMNS = 'id,labourer_id,project_id,work_date,shifts,status,overtime_hours,daily_wage,overtime_rate,amount,notes,created_at,updated_at';
+const normAttendance = (a: Attendance): Attendance => ({
+  ...a, shifts: n(a.shifts), overtime_hours: n(a.overtime_hours), daily_wage: n(a.daily_wage), overtime_rate: n(a.overtime_rate), amount: n(a.amount),
+});
+
 export const loaders = {
   settings: async (): Promise<CompanySettings> => {
     const row = check(await supabase.from('company_settings').select('*').eq('id', 1).maybeSingle());
@@ -117,8 +122,8 @@ export const loaders = {
   expenses: () => fetchAll<Expense>('expenses', { column: 'expense_date' }).then((rows) => rows.map((e) => ({ ...e, amount: n(e.amount), attendance_id: e.attendance_id ?? null }))),
   labourers: () => fetchAll<Labourer>('labourers', { column: 'name', ascending: true })
     .then((rows) => rows.map((l) => ({ ...l, daily_wage: n(l.daily_wage), overtime_rate: n(l.overtime_rate) }))),
-  attendance: () => fetchAll<Attendance>('labour_attendance', { column: 'work_date' })
-    .then((rows) => rows.map((a) => ({ ...a, overtime_hours: n(a.overtime_hours), daily_wage: n(a.daily_wage), overtime_rate: n(a.overtime_rate), amount: n(a.amount) }))),
+  // columns are listed so a database without the shift update is detected (missing "shifts" column)
+  attendance: () => fetchAll<Attendance>('labour_attendance', { column: 'work_date' }, ATTENDANCE_COLUMNS).then((rows) => rows.map(normAttendance)),
   labourPayments: () => fetchAll<LabourPayment>('labour_payments', { column: 'payment_date' }).then((rows) => rows.map((p) => ({ ...p, amount: n(p.amount) }))),
   catalog: () => fetchAll<CatalogItem>('catalog_items', { column: 'name', ascending: true }).then((rows) => rows.map((c) => ({ ...c, rate: n(c.rate), tax_rate: n(c.tax_rate) }))),
   profiles: () => fetchAll<Profile>('profiles', { column: 'created_at', ascending: true }),
@@ -207,7 +212,7 @@ export const fetchAudit = async (opts: { entityId?: string; entityIds?: string[]
 // ---------------------------------------------------------------------------
 
 export type AttendanceWrite = {
-  labourer_id: string; work_date: string; status?: AttendanceStatus; project_id?: string | null;
+  labourer_id: string; work_date: string; shifts?: number; project_id?: string | null;
   overtime_hours?: number; daily_wage?: number; overtime_rate?: number; notes?: string;
 };
 
@@ -219,8 +224,8 @@ export type AttendanceWrite = {
 export const saveAttendance = async (rows: AttendanceWrite[], opts: { onlyNew?: boolean } = {}): Promise<Attendance[]> => {
   if (!rows.length) return [];
   // onlyNew: days someone else marked in the meantime are left untouched
-  const data = check(await supabase.from('labour_attendance').upsert(rows, { onConflict: 'labourer_id,work_date', ignoreDuplicates: !!opts.onlyNew }).select());
-  return ((data ?? []) as Attendance[]).map((a) => ({ ...a, overtime_hours: n(a.overtime_hours), daily_wage: n(a.daily_wage), overtime_rate: n(a.overtime_rate), amount: n(a.amount) }));
+  const data = check(await supabase.from('labour_attendance').upsert(rows, { onConflict: 'labourer_id,work_date', ignoreDuplicates: !!opts.onlyNew }).select(ATTENDANCE_COLUMNS));
+  return ((data ?? []) as unknown as Attendance[]).map(normAttendance);
 };
 
 /** Applies new rates to a labourer's attendance on or after a date; wages and expenses are recomputed by the database. */

@@ -1,7 +1,7 @@
 import type { ReportSection, ReportSpec } from '@/lib/report-spec';
 import { financialYear, fmtDate, inr, monthKey, monthLabel, qty, round2 } from '@/lib/format';
 import { daysOverdue, invoiceStatus, isBillable, receivedOn } from '@/lib/status';
-import { fmtHours, groupBy, labourBalance, summariseAttendance, weekday } from '@/lib/labour';
+import { fmtHours, groupBy, labourBalance, summariseAttendance, weekday, type AttendanceTotals } from '@/lib/labour';
 import type { Attendance, Customer, Expense, Invoice, Labourer, LabourPayment, Payment, Project } from '@/lib/types';
 
 export const REPORT_TYPES = [
@@ -186,33 +186,37 @@ export function buildReport(type: ReportType, from: string, to: string, data: Re
       const rows = data.labourers.filter((l) => attBy.has(l.id) || payBy.has(l.id)).map((l) => {
         const t = summariseAttendance(attBy.get(l.id) ?? []);
         const paid = sum(payBy.get(l.id) ?? [], (p) => p.amount);
-        return { code: l.labour_code, name: l.name, trade: l.trade, present: t.present, half: t.half, absent: t.absent, ot: t.otHours, mandays: t.manDays, wages: t.wages, paid, net: round2(t.wages - paid) };
+        return { ...labourRow(l, t), paid, net: round2(t.wages - paid) };
       }).sort((a, b) => b.wages - a.wages || a.name.localeCompare(b.name));
       const total = summariseAttendance(att);
-      const columns: ReportSpec['columns'] = [
-        { key: 'code', label: 'Labour ID', weight: 0.85 }, { key: 'name', label: 'Labourer', weight: 1.6 }, { key: 'trade', label: 'Trade', weight: 1 },
-        { key: 'present', label: 'Present', align: 'right', format: 'number', weight: 0.7 }, { key: 'half', label: 'Half days', align: 'right', format: 'number', weight: 0.7 },
-        { key: 'absent', label: 'Absent', align: 'right', format: 'number', weight: 0.7 }, { key: 'ot', label: 'OT hours', align: 'right', format: 'number', weight: 0.75 },
-        { key: 'mandays', label: 'Man-days', align: 'right', format: 'number', weight: 0.8 }, { key: 'wages', label: 'Wages', align: 'right', format: 'money' },
-      ];
+      const columns: ReportSpec['columns'] = [...LABOUR_COLUMNS];
       if (!opts.projectId) columns.push({ key: 'paid', label: 'Paid', align: 'right', format: 'money' }, { key: 'net', label: 'Balance', align: 'right', format: 'money' });
       return {
         title: 'Labour wages & attendance', subtitle: project ? `${project.project_name} · ${subtitle}` : subtitle,
         summary: [
-          { label: 'Labourers', value: String(rows.length) }, { label: 'Man-days', value: qty(total.manDays) },
+          { label: 'Labourers', value: String(rows.length) }, { label: 'Shifts worked', value: qty(total.shifts) },
           { label: 'Wages earned', value: inr(total.wages) },
           opts.projectId ? { label: 'Overtime', value: fmtHours(total.otHours) } : { label: 'Paid', value: inr(sum(pays, (p) => p.amount)) },
         ],
         columns, rows,
-        totals: { code: 'Total', present: total.present, half: total.half, absent: total.absent, ot: total.otHours, mandays: total.manDays, wages: total.wages, paid: sum(rows, (r) => r.paid), net: sum(rows, (r) => r.net) },
+        totals: { ...labourTotals(total), paid: sum(rows, (r) => r.paid), net: sum(rows, (r) => r.net) },
         chart: { key: 'name', series: [{ key: 'wages', label: 'Wages', color: '#10294a' }, ...(opts.projectId ? [] : [{ key: 'paid', label: 'Paid', color: '#ee8a2f' }])], data: rows.slice(0, 10).map((r) => ({ name: short(r.name), wages: r.wages, paid: r.paid })) },
-        note: 'Man-days count a half day as 0.5. Wages come from attendance and are already included in project expenses; payments and advances only settle each labourer\'s balance.',
+        note: 'Wages = shifts worked × wage per shift (+ overtime). They come from attendance and are already included in project expenses; payments and advances only settle each labourer\'s balance.',
       };
     }
     default:
       return { title: 'Report', columns: [], rows: [] };
   }
 }
+
+const LABOUR_COLUMNS: ReportSpec['columns'] = [
+  { key: 'code', label: 'Labour ID', weight: 0.85 }, { key: 'name', label: 'Labourer', weight: 1.6 }, { key: 'trade', label: 'Trade', weight: 1 },
+  { key: 'worked', label: 'Days worked', align: 'right', format: 'number', weight: 0.8 }, { key: 'absent', label: 'Absent', align: 'right', format: 'number', weight: 0.65 },
+  { key: 'shifts', label: 'Shifts', align: 'right', format: 'number', weight: 0.7 }, { key: 'ot', label: 'OT hours', align: 'right', format: 'number', weight: 0.7 },
+  { key: 'wages', label: 'Wages', align: 'right', format: 'money' },
+];
+const labourRow = (l: Labourer, t: AttendanceTotals) => ({ code: l.labour_code, name: l.name, trade: l.trade, worked: t.worked, absent: t.absent, shifts: t.shifts, ot: t.otHours, wages: t.wages });
+const labourTotals = (t: AttendanceTotals) => ({ code: 'Total', worked: t.worked, absent: t.absent, shifts: t.shifts, ot: t.otHours, wages: t.wages });
 
 /** Everything about one project in the selected period: billing, collections, expenses and labour. */
 function projectReport(projectId: string | undefined, from: string, to: string, data: ReportData, customers: Map<string, Customer>, period: string): ReportResult {
@@ -245,10 +249,8 @@ function projectReport(projectId: string | undefined, from: string, to: string, 
     .sort((a, b) => b.amount - a.amount).map((r) => ({ ...r, share: share(r.amount, spent) }));
 
   const attBy = groupBy(att, (a) => a.labourer_id);
-  const labourRows = data.labourers.filter((l) => attBy.has(l.id)).map((l) => {
-    const t = summariseAttendance(attBy.get(l.id) ?? []);
-    return { code: l.labour_code, name: l.name, trade: l.trade, present: t.present, half: t.half, absent: t.absent, ot: t.otHours, mandays: t.manDays, wages: t.wages };
-  }).sort((a, b) => b.wages - a.wages || a.name.localeCompare(b.name));
+  const labourRows = data.labourers.filter((l) => attBy.has(l.id)).map((l) => labourRow(l, summariseAttendance(attBy.get(l.id) ?? [])))
+    .sort((a, b) => b.wages - a.wages || a.name.localeCompare(b.name));
 
   const otherExpenses = exps.filter((e) => !e.attendance_id).sort((a, b) => a.expense_date.localeCompare(b.expense_date))
     .map((e) => ({ date: fmtDate(e.expense_date), category: e.category, vendor: e.vendor, description: e.description, reference: e.reference, amount: e.amount }));
@@ -282,12 +284,9 @@ function projectReport(projectId: string | undefined, from: string, to: string, 
     },
     {
       title: 'Labour attendance & wages', empty: 'No labour attendance for this project in the selected period.',
-      columns: [{ key: 'code', label: 'Labour ID', weight: 0.85 }, { key: 'name', label: 'Labourer', weight: 1.6 }, { key: 'trade', label: 'Trade', weight: 1 },
-        { key: 'present', label: 'Present', align: 'right', format: 'number', weight: 0.7 }, { key: 'half', label: 'Half days', align: 'right', format: 'number', weight: 0.7 },
-        { key: 'absent', label: 'Absent', align: 'right', format: 'number', weight: 0.7 }, { key: 'ot', label: 'OT hours', align: 'right', format: 'number', weight: 0.75 },
-        { key: 'mandays', label: 'Man-days', align: 'right', format: 'number', weight: 0.8 }, { key: 'wages', label: 'Wages', align: 'right', format: 'money' }],
+      columns: LABOUR_COLUMNS,
       rows: labourRows,
-      totals: { code: 'Total', present: labour.present, half: labour.half, absent: labour.absent, ot: labour.otHours, mandays: labour.manDays, wages: labour.wages },
+      totals: labourTotals(labour),
     },
     {
       title: 'Other expenses (material, transport, subcontract…)', empty: 'No other expenses in the selected period.',
@@ -311,7 +310,7 @@ function projectReport(projectId: string | undefined, from: string, to: string, 
       { label: 'Total expenses', value: inr(spent) },
       { label: 'Labour wages', value: inr(labour.wages) },
       { label: 'Margin (excl. GST)', value: inr(taxable - spent) },
-      { label: 'Labour man-days', value: qty(labour.manDays) },
+      { label: 'Labour shifts', value: qty(labour.shifts) },
     ],
     columns: [], rows: [], sections,
     chart: { key: 'period', series: [{ key: 'taxable', label: 'Billed (excl. GST)', color: '#10294a' }, { key: 'labour', label: 'Labour', color: '#ee8a2f' }, { key: 'other', label: 'Other expenses', color: '#ef4444' }], data: monthly.map((r) => ({ period: r.period, taxable: r.taxable, labour: r.labour, other: r.other })) },
@@ -334,11 +333,11 @@ export function buildLabourerStatement(lab: Labourer, from: string, to: string, 
     title: 'Labour statement', subtitle: `${lab.labour_code} · ${period}`,
     info: [
       { label: 'Labourer', value: lab.name }, { label: 'Labour ID', value: lab.labour_code }, { label: 'Trade', value: lab.trade || '—' },
-      { label: 'Phone', value: lab.phone || '—' }, { label: 'Rates', value: `${inr(lab.daily_wage)} / day · OT ${inr(lab.overtime_rate)} / h` },
+      { label: 'Phone', value: lab.phone || '—' }, { label: 'Rates', value: `${inr(lab.daily_wage)} / shift · OT ${inr(lab.overtime_rate)} / h` },
       { label: 'Usual site', value: projects.get(lab.default_project_id ?? '')?.project_name ?? '—' },
     ],
     summary: [
-      { label: 'Days present', value: qty(t.present) }, { label: 'Half days', value: qty(t.half) }, { label: 'Man-days', value: qty(t.manDays) }, { label: 'Overtime', value: fmtHours(t.otHours) },
+      { label: 'Days worked', value: qty(t.worked) }, { label: 'Days absent', value: qty(t.absent) }, { label: 'Shifts worked', value: qty(t.shifts) }, { label: 'Overtime', value: fmtHours(t.otHours) },
       { label: 'Wages earned', value: inr(t.wages) }, { label: 'Paid in period', value: inr(paid) }, { label: 'Period balance', value: inr(t.wages - paid) },
       { label: overall.balance < 0 ? 'Advance outstanding' : 'Total balance due', value: inr(Math.abs(overall.balance)) },
     ],
@@ -346,10 +345,10 @@ export function buildLabourerStatement(lab: Labourer, from: string, to: string, 
     sections: [
       {
         title: 'Attendance', empty: 'No attendance marked in this period.',
-        columns: [{ key: 'date', label: 'Date', weight: 0.95 }, { key: 'day', label: 'Day', weight: 0.55 }, { key: 'project', label: 'Project / site', weight: 1.9 }, { key: 'status', label: 'Status', weight: 0.85 },
-          { key: 'ot', label: 'OT hours', align: 'right', format: 'number', weight: 0.75 }, { key: 'rate', label: 'Rate / day', align: 'right', format: 'money', weight: 0.9 }, { key: 'amount', label: 'Wages', align: 'right', format: 'money' }],
-        rows: att.map((a) => ({ date: fmtDate(a.work_date), day: weekday(a.work_date), project: projects.get(a.project_id ?? '')?.project_name ?? 'General', status: a.status, ot: a.overtime_hours || '', rate: a.daily_wage, amount: a.amount })),
-        totals: { date: 'Total', ot: t.otHours, amount: t.wages },
+        columns: [{ key: 'date', label: 'Date', weight: 0.95 }, { key: 'day', label: 'Day', weight: 0.55 }, { key: 'project', label: 'Project / site', weight: 1.9 }, { key: 'shifts', label: 'Shifts', align: 'right', weight: 0.7 },
+          { key: 'rate', label: 'Rate / shift', align: 'right', format: 'money', weight: 0.9 }, { key: 'ot', label: 'OT hours', align: 'right', format: 'number', weight: 0.75 }, { key: 'amount', label: 'Wages', align: 'right', format: 'money' }],
+        rows: att.map((a) => ({ date: fmtDate(a.work_date), day: weekday(a.work_date), project: projects.get(a.project_id ?? '')?.project_name ?? 'General', shifts: a.shifts > 0 ? qty(a.shifts) : 'Absent', rate: a.daily_wage, ot: a.overtime_hours || '', amount: a.amount })),
+        totals: { date: 'Total', shifts: qty(t.shifts), ot: t.otHours, amount: t.wages },
       },
       {
         title: 'Payments & advances', empty: 'No payments in this period.',

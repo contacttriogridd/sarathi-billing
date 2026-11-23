@@ -8,11 +8,11 @@ import { useAuth, useData } from '@/components/providers';
 import { Card, ConfirmDialog, Field, NumberInput, SelectNative, Segmented, Spinner, TextInput, Toggle } from '@/components/common';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Textarea } from '@/components/ui/textarea';
-import { ATTENDANCE_STATUSES, LABOUR_PAYMENT_KINDS, LABOUR_TRADES, PAYMENT_METHODS } from '@/lib/constants';
+import { LABOUR_PAYMENT_KINDS, LABOUR_TRADES, PAYMENT_METHODS } from '@/lib/constants';
 import { LABOUR_SETUP_MESSAGE, deleteRow, friendlyError, repriceAttendance, saveAttendance, upsertRow } from '@/lib/data';
 import { fmtDate, inr, isValidPhone, todayISO } from '@/lib/format';
-import { STATUS_TONE, attendanceAmount, labourBalance, suggestedOvertimeRate } from '@/lib/labour';
-import type { Attendance, AttendanceStatus, Labourer, LabourPayment } from '@/lib/types';
+import { MAX_SHIFTS, SHIFT_OPTIONS, attendanceAmount, fmtShifts, labourBalance, shiftNumber, shiftTone, suggestedOvertimeRate } from '@/lib/labour';
+import type { Attendance, Labourer, LabourPayment } from '@/lib/types';
 
 const dialogClass = 'max-h-[92vh] overflow-y-auto rounded-2xl p-5 sm:max-w-xl sm:p-6';
 
@@ -49,24 +49,24 @@ export function LabourSetupNotice() {
   );
 }
 
-/** Present / Half day / Absent buttons. */
-export function StatusButtons({ value, onChange, disabled, compact }: { value: AttendanceStatus | null; onChange: (s: AttendanceStatus) => void; disabled?: boolean; compact?: boolean }) {
+/** Shifts worked: Absent, ½, 1, 1½, 2. A custom value (e.g. 1.25) leaves none selected. */
+export function ShiftButtons({ value, onChange, disabled }: { value: number | null; onChange: (shifts: number) => void; disabled?: boolean }) {
   return (
-    <div className="inline-flex gap-1" role="radiogroup" aria-label="Attendance">
-      {ATTENDANCE_STATUSES.map((s) => (
+    <div className="inline-flex gap-1" role="radiogroup" aria-label="Shifts worked">
+      {SHIFT_OPTIONS.map((n) => (
         <button
-          key={s}
+          key={n}
           type="button"
           role="radio"
-          aria-label={s}
-          aria-checked={value === s}
+          aria-label={n === 0 ? 'Absent' : fmtShifts(n)}
+          title={n === 0 ? 'Absent' : fmtShifts(n)}
+          aria-checked={value === n}
           disabled={disabled}
-          onClick={() => onChange(s)}
-          className={cn('h-9 rounded-lg px-2.5 text-[13px] font-semibold ring-1 ring-inset transition disabled:opacity-60',
-            compact ? 'min-w-[38px]' : 'min-w-[64px]',
-            value === s ? STATUS_TONE[s].active : 'bg-white text-slate-600 ring-slate-200 hover:bg-slate-50')}
+          onClick={() => onChange(n)}
+          className={cn('h-9 min-w-[40px] rounded-lg px-2 text-[13px] font-semibold ring-1 ring-inset transition disabled:opacity-60',
+            value === n ? shiftTone(n).active : 'bg-white text-slate-600 ring-slate-200 hover:bg-slate-50')}
         >
-          {compact ? STATUS_TONE[s].short : s === 'Half day' ? 'Half' : s}
+          {n === 0 ? 'Absent' : shiftNumber(n)}
         </button>
       ))}
     </div>
@@ -98,7 +98,7 @@ export function LabourerDialog({ open, onOpenChange, labourer, defaultProjectId,
     const errs: Record<string, string> = {};
     if (!form.name?.trim()) errs.name = 'Labourer name is required';
     if (!isValidPhone(form.phone ?? '')) errs.phone = 'Enter a valid 10-digit phone number';
-    if (!((form.daily_wage ?? 0) > 0)) errs.daily_wage = 'Enter the daily wage';
+    if (!((form.daily_wage ?? 0) > 0)) errs.daily_wage = 'Enter the wage per shift';
     setErrors(errs);
     if (Object.keys(errs).length) return;
     setBusy(true);
@@ -122,7 +122,7 @@ export function LabourerDialog({ open, onOpenChange, labourer, defaultProjectId,
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className={dialogClass}>
-        <DialogHeader><DialogTitle>{labourer ? 'Edit labourer' : 'Add labourer'}</DialogTitle><DialogDescription>Wages are worked out from attendance and added to project expenses automatically.</DialogDescription></DialogHeader>
+        <DialogHeader><DialogTitle>{labourer ? 'Edit labourer' : 'Add labourer'}</DialogTitle><DialogDescription>Wages for a day = shifts worked × wage per shift. They are added to project expenses automatically.</DialogDescription></DialogHeader>
         <form onSubmit={submit} className="mt-2 grid gap-4 sm:grid-cols-2">
           <Field label="Labourer name" required error={errors.name} className="sm:col-span-2"><TextInput autoFocus value={form.name ?? ''} onChange={(e) => set({ name: e.target.value })} placeholder="Full name" /></Field>
           <Field label="Trade / skill">
@@ -130,10 +130,12 @@ export function LabourerDialog({ open, onOpenChange, labourer, defaultProjectId,
             <datalist id="labour-trades">{LABOUR_TRADES.map((t) => <option key={t} value={t} />)}</datalist>
           </Field>
           <Field label="Phone" error={errors.phone}><TextInput type="tel" inputMode="tel" value={form.phone ?? ''} onChange={(e) => set({ phone: e.target.value })} placeholder="98765 43210" /></Field>
-          <Field label="Daily wage (₹)" required error={errors.daily_wage}>
+          <Field label="Wage per shift (₹)" required error={errors.daily_wage} hint="1 shift = a normal day's work; 1½ shifts pays 1.5 × this rate.">
+
+
             <NumberInput value={form.daily_wage ?? 0} onValue={(v) => set({ daily_wage: v ?? 0, ...(otTouched ? {} : { overtime_rate: suggestedOvertimeRate(v ?? 0) }) })} className="font-semibold" />
           </Field>
-          <Field label="Overtime rate (₹ per hour)" hint={`Suggested ${inr(suggestedOvertimeRate(form.daily_wage ?? 0))} (daily wage ÷ 8)`}>
+          <Field label="Overtime rate (₹ per hour)" hint={`Optional, paid on top of shifts. Suggested ${inr(suggestedOvertimeRate(form.daily_wage ?? 0))} (wage per shift ÷ 8)`}>
             <NumberInput value={form.overtime_rate ?? 0} onValue={(v) => { setOtTouched(true); set({ overtime_rate: v ?? 0 }); }} allowEmpty placeholder="0" />
           </Field>
           {ratesChanged && (
@@ -174,7 +176,7 @@ export function AttendanceDialog({ open, onOpenChange, labourer, date, record, d
 }) {
   const { isAdmin } = useAuth();
   const { projects, refresh } = useData();
-  const [status, setStatus] = useState<AttendanceStatus>('Present');
+  const [shifts, setShifts] = useState(1);
   const [projectId, setProjectId] = useState('');
   const [ot, setOt] = useState(0);
   const [wage, setWage] = useState(0);
@@ -185,7 +187,7 @@ export function AttendanceDialog({ open, onOpenChange, labourer, date, record, d
 
   useEffect(() => {
     if (!open || !labourer) return;
-    setStatus(record?.status ?? 'Present');
+    setShifts(record?.shifts ?? 1);
     setProjectId(record ? record.project_id ?? '' : defaultProjectId ?? labourer.default_project_id ?? '');
     setOt(record?.overtime_hours ?? 0);
     setWage(record?.daily_wage ?? labourer.daily_wage);
@@ -194,18 +196,20 @@ export function AttendanceDialog({ open, onOpenChange, labourer, date, record, d
   }, [open, labourer, record, defaultProjectId]);
 
   if (!labourer) return null;
-  const amount = attendanceAmount(status, wage, ot, otRate);
+  const absent = shifts <= 0;
+  const amount = attendanceAmount(shifts, wage, ot, otRate);
   const future = date > todayISO();
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (future) return toast.error('Attendance cannot be marked for a future date');
+    if (!(shifts >= 0 && shifts <= MAX_SHIFTS)) return toast.error(`Shifts must be between 0 and ${MAX_SHIFTS}`);
     if (ot < 0 || ot > 24) return toast.error('Overtime must be between 0 and 24 hours');
     setBusy(true);
     try {
-      const [saved] = await saveAttendance([{ labourer_id: labourer.id, work_date: date, status, project_id: projectId || null, overtime_hours: status === 'Absent' ? 0 : ot, daily_wage: wage, overtime_rate: otRate, notes: notes.trim() }]);
+      const [saved] = await saveAttendance([{ labourer_id: labourer.id, work_date: date, shifts, project_id: projectId || null, overtime_hours: absent ? 0 : ot, daily_wage: wage, overtime_rate: otRate, notes: notes.trim() }]);
       await refresh('attendance', 'expenses');
-      toast.success(`${labourer.name} · ${status} on ${fmtDate(date)}${saved && saved.amount > 0 ? ` · ${inr(saved.amount)} added to expenses` : ''}`);
+      toast.success(`${labourer.name} · ${absent ? 'Absent' : fmtShifts(shifts)} on ${fmtDate(date)}${saved && saved.amount > 0 ? ` · ${inr(saved.amount)} added to expenses` : ''}`);
       if (saved) onSaved?.(saved);
       onOpenChange(false);
     } catch (err) {
@@ -224,8 +228,14 @@ export function AttendanceDialog({ open, onOpenChange, labourer, date, record, d
             <DialogDescription>{labourer.labour_code}{labourer.trade ? ` · ${labourer.trade}` : ''} — the wage for the day is added to the project&apos;s expenses.</DialogDescription>
           </DialogHeader>
           <form onSubmit={submit} className="mt-2 grid gap-4 sm:grid-cols-2">
-            <FieldGroup label="Attendance" className="sm:col-span-2">
-              <Segmented value={status} onChange={setStatus} options={ATTENDANCE_STATUSES.map((s) => ({ value: s, label: s }))} className="flex w-full" />
+            <FieldGroup label="Shifts worked" className="sm:col-span-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <ShiftButtons value={shifts} onChange={setShifts} />
+                <span className="flex items-center gap-1.5 text-sm text-muted-foreground">
+                  or
+                  <NumberInput value={shifts} onValue={(v) => setShifts(v ?? 0)} className="h-9 w-20 sm:h-9" aria-label="Shifts (custom)" />
+                </span>
+              </div>
             </FieldGroup>
             <Field label="Project / site" className="sm:col-span-2">
               <SelectNative value={projectId} onChange={(e) => setProjectId(e.target.value)}>
@@ -233,12 +243,13 @@ export function AttendanceDialog({ open, onOpenChange, labourer, date, record, d
                 {projects.map((p) => <option key={p.id} value={p.id}>{p.project_name} ({p.project_code})</option>)}
               </SelectNative>
             </Field>
-            <Field label="Overtime hours"><NumberInput value={status === 'Absent' ? 0 : ot} onValue={(v) => setOt(v ?? 0)} allowEmpty placeholder="0" disabled={status === 'Absent'} /></Field>
+            <Field label="Overtime hours (optional)"><NumberInput value={absent ? 0 : ot} onValue={(v) => setOt(v ?? 0)} allowEmpty placeholder="0" disabled={absent} /></Field>
             <Field label="Overtime rate (₹ / hour)"><NumberInput value={otRate} onValue={(v) => setOtRate(v ?? 0)} allowEmpty placeholder="0" /></Field>
-            <Field label="Daily wage for this day (₹)" hint={wage !== labourer.daily_wage ? `Labourer's current rate is ${inr(labourer.daily_wage)}` : undefined}><NumberInput value={wage} onValue={(v) => setWage(v ?? 0)} /></Field>
+            <Field label="Wage per shift for this day (₹)" hint={wage !== labourer.daily_wage ? `Labourer's current rate is ${inr(labourer.daily_wage)} per shift` : undefined}><NumberInput value={wage} onValue={(v) => setWage(v ?? 0)} /></Field>
             <div className="flex flex-col justify-end rounded-xl bg-slate-50 px-4 py-3">
               <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Wages for the day</p>
               <p className="num text-xl font-semibold text-brand-ink">{inr(amount)}</p>
+              <p className="num text-[11px] text-muted-foreground">{absent ? 'Absent — no wage' : `${shiftNumber(shifts)} × ${inr(wage, 0)}${ot > 0 ? ` + ${ot} h × ${inr(otRate, 0)}` : ''}`}</p>
             </div>
             <Field label="Notes" className="sm:col-span-2"><TextInput value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Work done, reason for absence…" /></Field>
             {future && <p className="rounded-xl bg-amber-50 px-4 py-2.5 text-sm text-amber-800 sm:col-span-2">This date is in the future — attendance can only be marked for today or earlier.</p>}

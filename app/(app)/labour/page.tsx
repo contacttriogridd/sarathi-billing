@@ -8,11 +8,11 @@ import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { useData } from '@/components/providers';
 import { Card, ConfirmDialog, EmptyState, LoadingPanel, PageHeader, SearchInput, Segmented, SelectNative, StatCard, TextInput, matches, useDebounced } from '@/components/common';
-import { AttendanceDialog, LabourPaymentDialog, LabourSetupNotice, LabourerDialog, StatusButtons } from '@/components/labour-forms';
+import { AttendanceDialog, LabourPaymentDialog, LabourSetupNotice, LabourerDialog, ShiftButtons } from '@/components/labour-forms';
 import { friendlyError, saveAttendance } from '@/lib/data';
-import { addDays, fmtDate, inr, initials, monthKey, qty, todayISO } from '@/lib/format';
-import { STATUS_TONE, attendanceAmount, fmtHours, groupBy, labourBalance, summariseAttendance, weekday } from '@/lib/labour';
-import type { Attendance, AttendanceStatus, Labourer } from '@/lib/types';
+import { addDays, fmtDate, inr, initials, monthKey, todayISO } from '@/lib/format';
+import { attendanceAmount, fmtHours, fmtShifts, groupBy, labourBalance, shiftNumber, shiftTone, statusFromShifts, summariseAttendance, weekday } from '@/lib/labour';
+import type { Attendance, Labourer } from '@/lib/types';
 
 type Tab = 'attendance' | 'labourers';
 const isoDate = (v: string | null) => (v && /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : null);
@@ -86,23 +86,24 @@ function LabourInner() {
   const unmarked = siteRows.filter((l) => !dayMap.get(l.id) && l.active);
   const siteProjects = useMemo(() => projects.filter((p) => (p.status !== 'Completed' && p.status !== 'Cancelled') || p.id === projectId), [projects, projectId]);
 
-  const mark = async (lab: Labourer, status: AttendanceStatus) => {
+  const mark = async (lab: Labourer, shifts: number) => {
     const rec = dayMap.get(lab.id);
-    if (rec?.status === status) return;
+    if (rec?.shifts === shifts) return;
     const key = dayKey(lab.id, date);
     const previous = overrides.get(key);
     const project = rec ? rec.project_id : projectId || lab.default_project_id || null;
-    const ot = status === 'Absent' ? 0 : rec?.overtime_hours ?? 0;
+    const ot = shifts <= 0 ? 0 : rec?.overtime_hours ?? 0;
+    const status = statusFromShifts(shifts);
     const optimistic: Attendance = rec
-      ? { ...rec, status, overtime_hours: ot, amount: attendanceAmount(status, rec.daily_wage, ot, rec.overtime_rate) }
-      : { id: `pending-${key}`, labourer_id: lab.id, project_id: project, work_date: date, status, overtime_hours: 0, daily_wage: lab.daily_wage, overtime_rate: lab.overtime_rate, amount: attendanceAmount(status, lab.daily_wage, 0, lab.overtime_rate), notes: '', created_at: '', updated_at: '' };
+      ? { ...rec, shifts, status, overtime_hours: ot, amount: attendanceAmount(shifts, rec.daily_wage, ot, rec.overtime_rate) }
+      : { id: `pending-${key}`, labourer_id: lab.id, project_id: project, work_date: date, shifts, status, overtime_hours: 0, daily_wage: lab.daily_wage, overtime_rate: lab.overtime_rate, amount: attendanceAmount(shifts, lab.daily_wage, 0, lab.overtime_rate), notes: '', created_at: '', updated_at: '' };
     setOverrides((m) => new Map(m).set(key, optimistic));
     setBusy((s) => new Set(s).add(key));
     try {
-      // status buttons never move someone to another site; an existing day keeps its project and rates
+      // shift buttons never move someone to another site; an existing day keeps its project and rates
       const [saved] = await saveAttendance([rec
-        ? { labourer_id: lab.id, work_date: date, status }
-        : { labourer_id: lab.id, work_date: date, status, project_id: project, daily_wage: lab.daily_wage, overtime_rate: lab.overtime_rate }]);
+        ? { labourer_id: lab.id, work_date: date, shifts }
+        : { labourer_id: lab.id, work_date: date, shifts, project_id: project, daily_wage: lab.daily_wage, overtime_rate: lab.overtime_rate }]);
       if (saved) setOverrides((m) => new Map(m).set(key, saved));
       scheduleRefresh();
     } catch (e) {
@@ -116,11 +117,11 @@ function LabourInner() {
   const markAllPresent = async () => {
     try {
       const saved = await saveAttendance(unmarked.map((l) => ({
-        labourer_id: l.id, work_date: date, status: 'Present' as const, project_id: projectId || l.default_project_id || null, daily_wage: l.daily_wage, overtime_rate: l.overtime_rate,
+        labourer_id: l.id, work_date: date, shifts: 1, project_id: projectId || l.default_project_id || null, daily_wage: l.daily_wage, overtime_rate: l.overtime_rate,
       })), { onlyNew: true });
       setOverrides((m) => { const next = new Map(m); saved.forEach((a) => next.set(dayKey(a.labourer_id, a.work_date), a)); return next; });
       scheduleRefresh();
-      toast.success(`${saved.length} labourer${saved.length === 1 ? '' : 's'} marked present · ${inr(saved.reduce((s, a) => s + a.amount, 0))} added to expenses`);
+      toast.success(`${saved.length} labourer${saved.length === 1 ? '' : 's'} marked 1 shift · ${inr(saved.reduce((s, a) => s + a.amount, 0))} added to expenses`);
     } catch (e) {
       toast.error(friendlyError(e));
       throw e;
@@ -141,7 +142,7 @@ function LabourInner() {
   const listed = useMemo(() => labourers.filter((l) => (state === 'all' || (state === 'active' ? l.active : !l.active)) && (!trade || l.trade === trade)
     && matches(q, l.name, l.labour_code, l.trade, l.phone, projectById.get(l.default_project_id ?? '')?.project_name)), [labourers, state, trade, q, projectById]);
   const overview = useMemo(() => {
-    const todays = attendance.filter((a) => a.work_date === today && a.status !== 'Absent').length;
+    const todays = attendance.filter((a) => a.work_date === today && a.shifts > 0).length;
     const month = monthKey(today);
     const monthWages = attendance.filter((a) => monthKey(a.work_date) === month).reduce((s, a) => s + a.amount, 0);
     let payable = 0;
@@ -169,7 +170,7 @@ function LabourInner() {
       </div>
 
       {!labourers.length ? (
-        <Card><EmptyState icon={HardHat} title="Add your labourers" description="Add each worker once with their trade and daily wage. Then mark Present, Half day or Absent every day — wages go straight into project expenses."
+        <Card><EmptyState icon={HardHat} title="Add your labourers" description="Add each worker once with their trade and wage per shift. Then mark the shifts they worked each day (½, 1, 1½, 2…) — wages go straight into project expenses."
           action={<button onClick={() => setAddOpen(true)} className="flex h-10 items-center gap-2 rounded-xl bg-brand-navy px-4 text-sm font-semibold text-white"><UserPlus size={16} />Add labourer</button>} /></Card>
       ) : tab === 'attendance' ? (
         <div className="space-y-4">
@@ -189,13 +190,13 @@ function LabourInner() {
 
           <div className="flex flex-wrap items-center gap-2">
             <span className="rounded-full bg-brand-navy px-3 py-1.5 text-sm font-semibold text-white">{weekday(date)}, {fmtDate(date)}</span>
-            <span className={cn('rounded-full px-3 py-1.5 text-sm ring-1 ring-inset', STATUS_TONE.Present.cell)}>Present <b className="num">{dayTotals.present}</b></span>
-            <span className={cn('rounded-full px-3 py-1.5 text-sm ring-1 ring-inset', STATUS_TONE['Half day'].cell)}>Half day <b className="num">{dayTotals.half}</b></span>
-            <span className={cn('rounded-full px-3 py-1.5 text-sm ring-1 ring-inset', STATUS_TONE.Absent.cell)}>Absent <b className="num">{dayTotals.absent}</b></span>
+            <span className={cn('rounded-full px-3 py-1.5 text-sm ring-1 ring-inset', shiftTone(1).cell)}>Working <b className="num">{dayTotals.worked}</b></span>
+            <span className={cn('rounded-full px-3 py-1.5 text-sm ring-1 ring-inset', shiftTone(2).cell)}>Shifts <b className="num">{shiftNumber(dayTotals.shifts)}</b></span>
+            <span className={cn('rounded-full px-3 py-1.5 text-sm ring-1 ring-inset', shiftTone(0).cell)}>Absent <b className="num">{dayTotals.absent}</b></span>
             <span className="rounded-full bg-white px-3 py-1.5 text-sm ring-1 ring-border">Not marked <b className="num">{unmarked.length}</b></span>
             <span className="rounded-full bg-white px-3 py-1.5 text-sm ring-1 ring-border">Wages <b className="num">{inr(dayTotals.wages, 0)}</b>{dayTotals.otHours > 0 ? ` · ${fmtHours(dayTotals.otHours)} OT` : ''}</span>
             {unmarked.length > 0 && (
-              <button onClick={() => setConfirmAll(true)} className="ml-auto flex h-9 items-center gap-1.5 rounded-xl bg-emerald-600 px-3.5 text-sm font-semibold text-white hover:bg-emerald-700"><CheckCheck size={16} />Mark {unmarked.length} present</button>
+              <button onClick={() => setConfirmAll(true)} className="ml-auto flex h-9 items-center gap-1.5 rounded-xl bg-emerald-600 px-3.5 text-sm font-semibold text-white hover:bg-emerald-700"><CheckCheck size={16} />Mark {unmarked.length} × 1 shift</button>
             )}
           </div>
 
@@ -216,12 +217,13 @@ function LabourInner() {
                       <Link href={`/labour/${l.id}`} className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-brand-navy/[0.07] text-xs font-semibold text-brand-navy">{initials(l.name)}</Link>
                       <div className="min-w-0">
                         <Link href={`/labour/${l.id}`} className="block truncate text-sm font-semibold text-brand-ink hover:underline">{l.name}</Link>
-                        <p className="truncate text-xs text-muted-foreground">{l.labour_code}{l.trade ? ` · ${l.trade}` : ''} · {inr(rec?.daily_wage ?? l.daily_wage, 0)}/day{showSite ? ` · ${showSite}` : ''}</p>
+                        <p className="truncate text-xs text-muted-foreground">{l.labour_code}{l.trade ? ` · ${l.trade}` : ''} · {inr(rec?.daily_wage ?? l.daily_wage, 0)}/shift{showSite ? ` · ${showSite}` : ''}</p>
                       </div>
                       <p className="num ml-auto shrink-0 text-sm font-semibold sm:hidden">{rec ? inr(rec.amount, 0) : ''}</p>
                     </div>
                     <div className="flex items-center gap-2">
-                      <StatusButtons value={rec?.status ?? null} onChange={(s) => mark(l, s)} disabled={busy.has(key)} />
+                      <ShiftButtons value={rec?.shifts ?? null} onChange={(n) => mark(l, n)} disabled={busy.has(key)} />
+                      {rec && rec.shifts > 0 && !([0.5, 1, 1.5, 2] as number[]).includes(rec.shifts) && <span className="rounded-md bg-sky-50 px-1.5 py-0.5 text-[11px] font-semibold text-sky-700">{fmtShifts(rec.shifts)}</span>}
                       {rec && rec.overtime_hours > 0 && <span className="rounded-md bg-sky-50 px-1.5 py-0.5 text-[11px] font-semibold text-sky-700">+{fmtHours(rec.overtime_hours)} OT</span>}
                       <p className="num hidden w-20 text-right text-sm font-semibold sm:block">{rec ? inr(rec.amount, 0) : '—'}</p>
                       <button onClick={() => setDayEdit(l)} className="ml-auto grid h-9 w-9 shrink-0 place-items-center rounded-lg text-slate-500 hover:bg-slate-100 sm:ml-0" aria-label={`Overtime, project and notes for ${l.name}`} title="Overtime, project, wage & notes"><MoreHorizontal size={17} /></button>
@@ -234,7 +236,7 @@ function LabourInner() {
           {hiddenCount > 0 && rows.length > 0 && (
             <button onClick={() => setShowAll(true)} className="text-sm font-medium text-brand-navy-3 hover:underline">Show all labourers ({hiddenCount} more at other sites)</button>
           )}
-          <p className="text-xs text-muted-foreground">Tap Present, Half or Absent — it saves straight away. Use ⋯ for overtime, a different site or the day&apos;s wage. Present = full day wage, Half = half, Absent = nothing.</p>
+          <p className="text-xs text-muted-foreground">Tap the shifts worked (½, 1, 1½, 2) or Absent — it saves straight away. Wages = shifts × wage per shift. Use ⋯ for any other number of shifts, overtime, a different site or the day&apos;s rate.</p>
         </div>
       ) : (
         <div className="space-y-4">
@@ -262,8 +264,8 @@ function LabourInner() {
                       <p className="truncate text-xs text-muted-foreground">{l.labour_code}{l.trade ? ` · ${l.trade}` : ''}{l.phone ? ` · ${l.phone}` : ''}{site ? ` · ${site}` : ''}</p>
                     </div>
                     <div className="hidden text-right sm:block">
-                      <p className="num text-sm font-medium">{inr(l.daily_wage, 0)}<span className="text-xs text-muted-foreground">/day</span></p>
-                      <p className="text-xs text-muted-foreground">{qty(b?.month.manDays ?? 0)} days this month</p>
+                      <p className="num text-sm font-medium">{inr(l.daily_wage, 0)}<span className="text-xs text-muted-foreground">/shift</span></p>
+                      <p className="text-xs text-muted-foreground">{fmtShifts(b?.month.shifts ?? 0)} this month</p>
                     </div>
                     <div className="w-28 text-right">
                       <p className={cn('num text-sm font-semibold', (b?.balance ?? 0) < 0 ? 'text-red-600' : (b?.balance ?? 0) > 0 ? 'text-brand-orange-dark' : 'text-emerald-600')}>{inr(Math.abs(b?.balance ?? 0), 0)}</p>
@@ -281,8 +283,8 @@ function LabourInner() {
       <LabourPaymentDialog open={payOpen} onOpenChange={setPayOpen} />
       <AttendanceDialog open={!!dayEdit} onOpenChange={(o) => !o && setDayEdit(null)} labourer={dayEdit} date={date} record={dayEdit ? dayMap.get(dayEdit.id) ?? null : null} defaultProjectId={projectId || null}
         onSaved={(a) => setOverrides((m) => new Map(m).set(dayKey(a.labourer_id, a.work_date), a))} />
-      <ConfirmDialog open={confirmAll} onOpenChange={setConfirmAll} title={`Mark ${unmarked.length} labourer${unmarked.length === 1 ? '' : 's'} present?`} confirmLabel="Mark present"
-        description={`Everyone not yet marked on ${fmtDate(date)}${projectId ? ` at ${projectById.get(projectId)?.project_name ?? 'this site'}` : ''} will be marked Present, and their wages added to expenses. Days already marked are not changed.`}
+      <ConfirmDialog open={confirmAll} onOpenChange={setConfirmAll} title={`Mark ${unmarked.length} labourer${unmarked.length === 1 ? '' : 's'} for 1 shift?`} confirmLabel="Mark 1 shift"
+        description={`Everyone not yet marked on ${fmtDate(date)}${projectId ? ` at ${projectById.get(projectId)?.project_name ?? 'this site'}` : ''} will get 1 shift, and their wages added to expenses. Days already marked are not changed — change anyone who worked more or less afterwards.`}
         onConfirm={markAllPresent} />
     </div>
   );

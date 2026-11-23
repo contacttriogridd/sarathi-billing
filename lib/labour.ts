@@ -1,36 +1,49 @@
 import { round2 } from '@/lib/format';
 import type { Attendance, AttendanceStatus, Labourer, LabourPayment } from '@/lib/types';
 
-/** Share of a day's wage earned for each attendance status (mirrors attendance_before_write in the database). */
-export const STATUS_FACTOR: Record<AttendanceStatus, number> = { Present: 1, 'Half day': 0.5, Absent: 0 };
+/** Quick choices on the attendance sheet. Any value from 0 to 3 can be entered in the day dialog. */
+export const SHIFT_OPTIONS = [0, 0.5, 1, 1.5, 2] as const;
+export const MAX_SHIFTS = 3;
 
-export const STATUS_TONE: Record<AttendanceStatus, { active: string; cell: string; dot: string; short: string }> = {
-  Present: { active: 'bg-emerald-600 text-white ring-emerald-600', cell: 'bg-emerald-50 text-emerald-800 ring-emerald-200', dot: 'bg-emerald-500', short: 'P' },
-  'Half day': { active: 'bg-amber-500 text-white ring-amber-500', cell: 'bg-amber-50 text-amber-800 ring-amber-200', dot: 'bg-amber-500', short: '½' },
-  Absent: { active: 'bg-red-600 text-white ring-red-600', cell: 'bg-red-50 text-red-700 ring-red-200', dot: 'bg-red-500', short: 'A' },
-};
+const FRACTIONS: Record<string, string> = { '0.5': '½', '1.5': '1½', '2.5': '2½' };
+/** 0.5 → ½, 1.5 → 1½, 1.25 → 1.25 */
+export const shiftNumber = (n: number) => FRACTIONS[String(n)] ?? String(Number(n.toFixed(2)));
+/** "½ shift", "1 shift", "1½ shifts" */
+export const fmtShifts = (n: number) => `${shiftNumber(n)} shift${n === 1 || n === 0.5 ? '' : 's'}`;
+/** Button / calendar label: A for absent, otherwise the shift count. */
+export const shiftShort = (n: number) => (n <= 0 ? 'A' : shiftNumber(n));
 
-/** Wage for one day — the same formula the database uses, for previews before saving. */
-export const attendanceAmount = (status: AttendanceStatus, dailyWage: number, overtimeHours: number, overtimeRate: number) =>
-  status === 'Absent' ? 0 : round2(dailyWage * STATUS_FACTOR[status] + (overtimeHours || 0) * overtimeRate);
+/** Colours by shifts worked: absent, part shift, one shift, extra shifts. */
+export const shiftTone = (n: number) => (n <= 0
+  ? { active: 'bg-red-600 text-white ring-red-600', cell: 'bg-red-50 text-red-700 ring-red-200', dot: 'bg-red-500' }
+  : n < 1
+    ? { active: 'bg-amber-500 text-white ring-amber-500', cell: 'bg-amber-50 text-amber-800 ring-amber-200', dot: 'bg-amber-500' }
+    : n === 1
+      ? { active: 'bg-emerald-600 text-white ring-emerald-600', cell: 'bg-emerald-50 text-emerald-800 ring-emerald-200', dot: 'bg-emerald-500' }
+      : { active: 'bg-sky-600 text-white ring-sky-600', cell: 'bg-sky-50 text-sky-800 ring-sky-200', dot: 'bg-sky-500' });
 
-/** Suggested overtime rate per hour for an 8-hour day. */
-export const suggestedOvertimeRate = (dailyWage: number) => round2(dailyWage / 8);
+/** Mirrors the database: 0 = Absent, under 1 = Half day, 1 or more = Present. */
+export const statusFromShifts = (n: number): AttendanceStatus => (n <= 0 ? 'Absent' : n < 1 ? 'Half day' : 'Present');
 
-export type AttendanceTotals = { entries: number; present: number; half: number; absent: number; otHours: number; manDays: number; wages: number };
+/** Wage for one day — shifts × rate per shift + overtime, the same formula the database uses. */
+export const attendanceAmount = (shifts: number, ratePerShift: number, overtimeHours: number, overtimeRate: number) =>
+  shifts <= 0 ? 0 : round2(ratePerShift * shifts + (overtimeHours || 0) * overtimeRate);
+
+/** Suggested overtime rate per hour for an 8-hour shift. */
+export const suggestedOvertimeRate = (ratePerShift: number) => round2(ratePerShift / 8);
+
+export type AttendanceTotals = { entries: number; worked: number; absent: number; shifts: number; otHours: number; wages: number };
 
 export const summariseAttendance = (rows: Attendance[]): AttendanceTotals => {
-  const t: AttendanceTotals = { entries: rows.length, present: 0, half: 0, absent: 0, otHours: 0, manDays: 0, wages: 0 };
+  const t: AttendanceTotals = { entries: rows.length, worked: 0, absent: 0, shifts: 0, otHours: 0, wages: 0 };
   rows.forEach((a) => {
-    if (a.status === 'Present') t.present += 1;
-    else if (a.status === 'Half day') t.half += 1;
-    else t.absent += 1;
+    if (a.shifts > 0) t.worked += 1; else t.absent += 1;
+    t.shifts += a.shifts;
     t.otHours += a.overtime_hours;
-    t.manDays += STATUS_FACTOR[a.status] ?? 0;
     t.wages += a.amount;
   });
+  t.shifts = round2(t.shifts);
   t.otHours = round2(t.otHours);
-  t.manDays = round2(t.manDays);
   t.wages = round2(t.wages);
   return t;
 };

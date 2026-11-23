@@ -10,8 +10,8 @@ import { Card, ConfirmDialog, LoadingPanel, Segmented, StatCard, StatusBadge } f
 import { ExpenseDialog, ProjectDialog } from '@/components/forms';
 import { ExpenseList } from '@/components/expense-list';
 import { deleteRow, friendlyError } from '@/lib/data';
-import { fmtDate, inr, initials, qty } from '@/lib/format';
-import { fmtHours, groupBy, summariseAttendance } from '@/lib/labour';
+import { fmtDate, inr, initials } from '@/lib/format';
+import { fmtHours, fmtShifts, groupBy, summariseAttendance } from '@/lib/labour';
 import type { Expense } from '@/lib/types';
 import { invoiceStatus, isBillable, receivedOn } from '@/lib/status';
 
@@ -119,12 +119,12 @@ export default function ProjectDetailPage({ params }: { params: { id: string } }
                   <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-brand-navy/[0.07] text-xs font-semibold text-brand-navy">{initials(r.labourer.name)}</span>
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-sm font-semibold">{r.labourer.name}</p>
-                    <p className="truncate text-xs text-muted-foreground">{r.labourer.labour_code}{r.labourer.trade ? ` · ${r.labourer.trade}` : ''} · {r.present} present{r.half ? `, ${r.half} half` : ''}{r.otHours ? ` · ${fmtHours(r.otHours)} OT` : ''}</p>
+                    <p className="truncate text-xs text-muted-foreground">{r.labourer.labour_code}{r.labourer.trade ? ` · ${r.labourer.trade}` : ''} · {r.worked} day{r.worked === 1 ? '' : 's'}{r.otHours ? ` · ${fmtHours(r.otHours)} OT` : ''}</p>
                   </div>
-                  <div className="text-right"><p className="num text-sm font-semibold">{inr(r.wages)}</p><p className="text-[11px] text-muted-foreground">{qty(r.manDays)} man-days</p></div>
+                  <div className="text-right"><p className="num text-sm font-semibold">{inr(r.wages)}</p><p className="text-[11px] text-muted-foreground">{fmtShifts(r.shifts)}</p></div>
                 </Link>
               ))}
-              <div className="flex items-center justify-between bg-slate-50/80 px-5 py-3 text-sm font-semibold"><span>Total labour · {qty(d.labourTotal.manDays)} man-days</span><span className="num">{inr(d.labourTotal.wages)}</span></div>
+              <div className="flex items-center justify-between bg-slate-50/80 px-5 py-3 text-sm font-semibold"><span>Total labour · {fmtShifts(d.labourTotal.shifts)}</span><span className="num">{inr(d.labourTotal.wages)}</span></div>
             </>
           ) : <p className="p-8 text-center text-sm text-muted-foreground">No labour attendance marked for this project yet.</p>)}
         </div>

@@ -6,6 +6,7 @@ import { ArrowRight, ChevronDown, HardHat, Pencil, Trash2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useData } from '@/components/providers';
 import { fmtDate, inr } from '@/lib/format';
+import { fmtShifts } from '@/lib/labour';
 import type { Expense } from '@/lib/types';
 
 type LabourGroup = { kind: 'labour'; key: string; date: string; projectId: string | null; items: Expense[]; total: number };
@@ -55,7 +56,7 @@ export function ExpenseList({ expenses, showProject = true, onEdit, onDelete }: 
         }
         const open = expanded.has(it.key);
         const records = it.items.map((e) => attendanceById.get(e.attendance_id ?? '')).filter(Boolean);
-        const half = records.filter((a) => a!.status === 'Half day').length;
+        const shifts = records.reduce((s, a) => s + (a?.shifts ?? 0), 0);
         const project = it.projectId ? projectById.get(it.projectId)?.project_name : null;
         return (
           <div key={it.key}>
@@ -64,7 +65,7 @@ export function ExpenseList({ expenses, showProject = true, onEdit, onDelete }: 
               <div className="min-w-0 flex-1">
                 <p className="truncate text-sm font-semibold">Labour attendance · {it.items.length} labourer{it.items.length === 1 ? '' : 's'}</p>
                 <p className="truncate text-xs text-muted-foreground">
-                  {fmtDate(it.date)} · Labour{showProject ? ` · ${project ?? 'General'}` : ''} · {it.items.length - half} full day{it.items.length - half === 1 ? '' : 's'}{half ? `, ${half} half day${half === 1 ? '' : 's'}` : ''}
+                  {fmtDate(it.date)} · Labour{showProject ? ` · ${project ?? 'General'}` : ''}{records.length ? ` · ${fmtShifts(Math.round(shifts * 100) / 100)}` : ''}
                 </p>
               </div>
               <p className="num text-right font-semibold">{inr(it.total)}</p>

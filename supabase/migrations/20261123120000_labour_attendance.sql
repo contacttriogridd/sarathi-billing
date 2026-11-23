@@ -8,6 +8,9 @@
   (20261115120000_sarathi_billing_schema.sql). It is idempotent: re-running it is safe
   and never deletes data. Fresh installs get the same objects from the main schema file.
 
+  Then run 20261123180000_labour_shift_wages.sql (shift-based wages). If you ever re-run
+  this file, re-run that one after it too, because it replaces the wage functions defined here.
+
   WHAT IT ADDS
   ------------
   * labourers          every worker: Labour ID (LAB-0001…), trade, daily wage, overtime rate, usual site

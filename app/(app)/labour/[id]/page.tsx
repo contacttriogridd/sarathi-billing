@@ -11,7 +11,7 @@ import { Card, ConfirmDialog, LoadingPanel, Segmented, StatCard } from '@/compon
 import { AttendanceDialog, LabourPaymentDialog, LabourSetupNotice, LabourerDialog } from '@/components/labour-forms';
 import { deleteRow, friendlyError } from '@/lib/data';
 import { fmtDate, inr, monthKey, qty, round2, slug, todayISO } from '@/lib/format';
-import { STATUS_TONE, fmtHours, labourBalance, monthBounds, monthGrid, monthTitle, shiftMonth, summariseAttendance, weekday } from '@/lib/labour';
+import { fmtHours, fmtShifts, labourBalance, monthBounds, monthGrid, monthTitle, shiftMonth, shiftShort, shiftTone, summariseAttendance, weekday } from '@/lib/labour';
 import { buildLabourerStatement } from '@/lib/reports';
 import { generateReportPdf } from '@/lib/pdf/lazy';
 import { downloadBytes } from '@/lib/share';
@@ -90,9 +90,9 @@ export default function LabourerPage({ params }: { params: { id: string } }) {
       </div>
 
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
-        <StatCard label="Daily wage" value={inr(lab.daily_wage, 0)} icon={IndianRupee} hint={`OT ${inr(lab.overtime_rate, 0)} / hour`} />
-        <StatCard label={monthTitle(month)} value={`${qty(d.month.manDays)} days`} icon={CalendarCheck} tone="sky" hint={`${inr(d.month.wages, 0)} wages${d.month.otHours ? ` · ${fmtHours(d.month.otHours)} OT` : ''}`} />
-        <StatCard label="Total earned" value={inr(d.balance.earned, 0)} icon={CalendarDays} tone="slate" hint={`${qty(d.total.manDays)} man-days in all`} />
+        <StatCard label="Wage per shift" value={inr(lab.daily_wage, 0)} icon={IndianRupee} hint={`OT ${inr(lab.overtime_rate, 0)} / hour`} />
+        <StatCard label={monthTitle(month)} value={fmtShifts(d.month.shifts)} icon={CalendarCheck} tone="sky" hint={`${d.month.worked} days · ${inr(d.month.wages, 0)} wages${d.month.otHours ? ` · ${fmtHours(d.month.otHours)} OT` : ''}`} />
+        <StatCard label="Total earned" value={inr(d.balance.earned, 0)} icon={CalendarDays} tone="slate" hint={`${fmtShifts(d.total.shifts)} in all`} />
         <StatCard label="Total paid" value={inr(d.balance.paid, 0)} icon={Wallet} tone="green" hint={d.balance.advances ? `incl. ${inr(d.balance.advances, 0)} advances` : `${d.pays.length} payment${d.pays.length === 1 ? '' : 's'}`} />
         <StatCard label={d.balance.balance < 0 ? 'Advance outstanding' : 'Balance due'} value={inr(Math.abs(d.balance.balance), 0)} icon={HandCoins} tone={d.balance.balance < 0 ? 'red' : d.balance.balance > 0 ? 'orange' : 'green'}
           hint={d.balance.balance < 0 ? 'To recover from future wages' : d.balance.balance > 0 ? 'Earned but not yet paid' : 'Fully settled'} />
@@ -106,7 +106,7 @@ export default function LabourerPage({ params }: { params: { id: string } }) {
             <button onClick={() => setMonth(shiftMonth(month, 1))} disabled={month >= monthKey(today)} className="grid h-9 w-9 place-items-center rounded-lg border bg-white hover:bg-slate-50 disabled:opacity-40" aria-label="Next month"><ChevronRight size={17} /></button>
           </div>
           <div className="hidden flex-wrap gap-3 text-xs text-muted-foreground sm:flex">
-            {(['Present', 'Half day', 'Absent'] as const).map((s) => <span key={s} className="flex items-center gap-1.5"><span className={cn('h-2.5 w-2.5 rounded-full', STATUS_TONE[s].dot)} />{s}</span>)}
+            {([[2, 'More than 1 shift'], [1, '1 shift'], [0.5, 'Part shift'], [0, 'Absent']] as const).map(([n, label]) => <span key={label} className="flex items-center gap-1.5"><span className={cn('h-2.5 w-2.5 rounded-full', shiftTone(n).dot)} />{label}</span>)}
           </div>
         </div>
         <div className="grid grid-cols-7 gap-1 sm:gap-1.5">
@@ -116,18 +116,18 @@ export default function LabourerPage({ params }: { params: { id: string } }) {
             const a = d.byDate.get(iso);
             const future = iso > today;
             return (
-              <button key={iso} disabled={future} onClick={() => setDay(iso)} title={a ? `${a.status}${a.overtime_hours ? ` + ${fmtHours(a.overtime_hours)} OT` : ''} · ${inr(a.amount)}` : future ? undefined : 'Not marked — tap to mark'}
-                className={cn('flex h-12 flex-col items-center justify-center rounded-lg text-sm ring-1 ring-inset transition sm:h-16', a ? STATUS_TONE[a.status].cell : 'bg-white text-slate-600 ring-slate-200 hover:bg-slate-50', future && 'cursor-default opacity-40', iso === today && 'ring-2 ring-brand-navy')}>
+              <button key={iso} disabled={future} onClick={() => setDay(iso)} title={a ? `${a.shifts > 0 ? fmtShifts(a.shifts) : 'Absent'}${a.overtime_hours ? ` + ${fmtHours(a.overtime_hours)} OT` : ''} · ${inr(a.amount)}` : future ? undefined : 'Not marked — tap to mark'}
+                className={cn('flex h-12 flex-col items-center justify-center rounded-lg text-sm ring-1 ring-inset transition sm:h-16', a ? shiftTone(a.shifts).cell : 'bg-white text-slate-600 ring-slate-200 hover:bg-slate-50', future && 'cursor-default opacity-40', iso === today && 'ring-2 ring-brand-navy')}>
                 <span className="font-semibold leading-none">{Number(iso.slice(8))}</span>
-                {a && <span className="mt-0.5 text-[10px] font-semibold leading-none">{STATUS_TONE[a.status].short}{a.overtime_hours > 0 ? '+OT' : ''}</span>}
+                {a && <span className="mt-0.5 text-[10px] font-semibold leading-none">{shiftShort(a.shifts)}{a.overtime_hours > 0 ? '+OT' : ''}</span>}
                 {a && a.amount > 0 && <span className="num mt-0.5 hidden text-[10px] leading-none opacity-80 sm:block">{inr(a.amount, 0)}</span>}
               </button>
             );
           })}
         </div>
         <div className="mt-4 grid grid-cols-3 gap-2 rounded-xl bg-slate-50 p-3 text-center sm:grid-cols-6">
-          <div><p className="text-[11px] text-muted-foreground">Present</p><p className="num text-sm font-semibold">{d.month.present}</p></div>
-          <div><p className="text-[11px] text-muted-foreground">Half days</p><p className="num text-sm font-semibold">{d.month.half}</p></div>
+          <div><p className="text-[11px] text-muted-foreground">Days worked</p><p className="num text-sm font-semibold">{d.month.worked}</p></div>
+          <div><p className="text-[11px] text-muted-foreground">Shifts</p><p className="num text-sm font-semibold">{qty(d.month.shifts)}</p></div>
           <div><p className="text-[11px] text-muted-foreground">Absent</p><p className="num text-sm font-semibold">{d.month.absent}</p></div>
           <div><p className="text-[11px] text-muted-foreground">Overtime</p><p className="num text-sm font-semibold">{fmtHours(d.month.otHours)}</p></div>
           <div><p className="text-[11px] text-muted-foreground">Wages</p><p className="num text-sm font-semibold">{inr(d.month.wages, 0)}</p></div>
@@ -143,10 +143,10 @@ export default function LabourerPage({ params }: { params: { id: string } }) {
         <div className="divide-y">
           {tab === 'register' && (d.monthAtt.length ? d.monthAtt.map((a) => (
             <button key={a.id} onClick={() => setDay(a.work_date)} className="flex w-full items-center gap-3 px-5 py-3 text-left hover:bg-slate-50/70">
-              <span className={cn('grid h-8 w-8 shrink-0 place-items-center rounded-lg text-xs font-bold ring-1 ring-inset', STATUS_TONE[a.status].cell)}>{STATUS_TONE[a.status].short}</span>
+              <span className={cn('grid h-8 w-8 shrink-0 place-items-center rounded-lg text-xs font-bold ring-1 ring-inset', shiftTone(a.shifts).cell)}>{shiftShort(a.shifts)}</span>
               <div className="min-w-0 flex-1">
-                <p className="truncate text-sm font-medium">{weekday(a.work_date)}, {fmtDate(a.work_date)} · {a.status}{a.overtime_hours > 0 ? ` + ${fmtHours(a.overtime_hours)} OT` : ''}</p>
-                <p className="truncate text-xs text-muted-foreground">{a.project_id ? projectById.get(a.project_id)?.project_name ?? 'Project' : 'General'} · {inr(a.daily_wage, 0)}/day{a.notes ? ` · ${a.notes}` : ''}</p>
+                <p className="truncate text-sm font-medium">{weekday(a.work_date)}, {fmtDate(a.work_date)} · {a.shifts > 0 ? fmtShifts(a.shifts) : 'Absent'}{a.overtime_hours > 0 ? ` + ${fmtHours(a.overtime_hours)} OT` : ''}</p>
+                <p className="truncate text-xs text-muted-foreground">{a.project_id ? projectById.get(a.project_id)?.project_name ?? 'Project' : 'General'} · {inr(a.daily_wage, 0)}/shift{a.notes ? ` · ${a.notes}` : ''}</p>
               </div>
               <p className="num text-sm font-semibold">{inr(a.amount)}</p>
             </button>
