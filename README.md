@@ -14,6 +14,9 @@ SARATHI ASSOCIATES, Anitha Complex, Perumanallur, Tiruppur.
 1. Open **Supabase Dashboard → SQL Editor → New query**.
 2. Paste the whole of `supabase/migrations/20261115120000_sarathi_billing_schema.sql` and click **Run**.
    The script is idempotent, so running it again is safe and never deletes data.
+   **Already set up before the labour attendance feature (Nov 2026)?** Also run
+   `supabase/migrations/20261123120000_labour_attendance.sql` once. Until then the
+   *Services → Labour attendance* page shows a setup notice, and the rest of the app keeps working.
 3. **Authentication → URL Configuration:**
    - *Site URL*: the address where the app is hosted, e.g. `https://billing.yourdomain.in` (or `http://localhost:3000` while testing).
    - *Redirect URLs*: add `<site-url>/reset-password` and `<site-url>/login`. Password-reset emails need this.
@@ -30,7 +33,7 @@ The **first account created becomes the active administrator**. Every later sign
 | Role  | Can do |
 |-------|--------|
 | Admin | Everything: company settings, team approval and roles, deleting records, editing issued invoices, restoring backups |
-| Staff | Create and edit customers, projects, quotations, estimates, draft invoices, payments and expenses. Cannot delete, change settings or edit issued invoices |
+| Staff | Create and edit customers, projects, quotations, estimates, draft invoices, payments, expenses, labourers, attendance and labour payments. Cannot delete, change settings or edit issued invoices |
 
 These rules are enforced **in the database** (RLS policies and triggers), not only in the UI.
 
@@ -121,10 +124,19 @@ Installing needs **HTTPS**, so on phones install from the deployed address (Netl
 - Payment receipts (PDF) and aging buckets
 - WhatsApp and email reminders, plus a customer statement on WhatsApp
 
+**Labour attendance** (menu: Services → Labour attendance)
+- Labourers with Labour ID (LAB-0001…), trade, daily wage, overtime rate and usual site
+- Daily attendance sheet: one tap for Present / Half day / Absent, "mark all present", per-site view, overtime and per-day wage overrides
+- Each labourer's page: month calendar (tap any day to mark or correct it), wages earned, wages paid and advances, balance due, and a monthly statement PDF
+- **Wages go into expenses automatically:** every attendance day that earns a wage becomes a *Labour* expense on its project, kept in sync by the database when the day is changed or removed. Project margins, the expense list and the profit reports include labour without any double entry
+- Payments and advances to labourers settle their balance only; they are not added as another expense
+
 **More**
 - Dashboard with KPIs and charts that update live (Supabase Realtime)
 - Customers, projects (budget vs billed, expenses and margin), expenses, and a reusable item catalogue
 - Reports with PDF and Excel export: daily, monthly, annual (FY), customer-wise, project-wise, GST summary, GST register, paid / pending / overdue, profit & expense
+- **Project report** for each project separately (Reports → Project report, or the *Report* button on a project): budget, billing, collections, monthly summary, invoices, payments, expenses by category, labour attendance & wages per labourer, and other expenses
+- Labour wages & attendance report: man-days, overtime, wages, paid and balance per labourer, for all sites or one project
 - Audit log for every create, edit, cancellation (with reason) and payment
 - JSON backup and restore, ⌘/Ctrl K command palette, responsive desktop / tablet / mobile layouts
 
@@ -151,3 +163,4 @@ public/fonts/          subset TrueType fonts (Latin + ₹) embedded in PDFs
 - Payment triggers recalculate `amount_paid`, `balance_due` and `status`, and reject over-payments and payments on cancelled invoices.
 - Guard triggers stop staff from editing issued invoices and stop anyone from removing the last administrator.
 - A generic audit trigger records field-level changes, and the audit log can't be modified.
+- Attendance triggers compute each day's wage and create, update or remove the matching Labour expense. These expenses can only change through attendance, so the two never drift apart.

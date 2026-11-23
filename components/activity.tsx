@@ -19,6 +19,8 @@ const ENTITY: Record<string, { label: string; href?: (id: string) => string }> =
   customers: { label: 'Customer', href: (id) => `/customers/${id}` },
   projects: { label: 'Project', href: (id) => `/projects/${id}` },
   expenses: { label: 'Expense' },
+  labourers: { label: 'Labourer', href: (id) => `/labour/${id}` },
+  labour_payments: { label: 'Labour payment' },
   company_settings: { label: 'Company settings' },
   profiles: { label: 'Team member' },
 };
@@ -29,6 +31,11 @@ export const describeAudit = (log: AuditLog) => {
   if (log.entity_type === 'payments') {
     const amt = inr(Number(log.details?.amount ?? 0));
     return log.action === 'created' ? `Payment of ${amt} recorded (${log.entity_label})` : log.action === 'deleted' ? `Payment of ${amt} deleted (${log.entity_label})` : `Payment ${log.entity_label} updated`;
+  }
+  if (log.entity_type === 'labour_payments') {
+    const amt = inr(Number(log.details?.amount ?? 0));
+    const what = log.entity_label === 'Advance' ? 'Labour advance' : 'Labour wages payment';
+    return log.action === 'created' ? `${what} of ${amt} recorded` : log.action === 'deleted' ? `${what} of ${amt} deleted` : `${what} edited`;
   }
   if (log.action === 'created') return `${entity} ${log.entity_label} created`;
   if (log.action === 'deleted') return `${entity} ${log.entity_label} deleted`;
@@ -41,7 +48,7 @@ export const describeAudit = (log: AuditLog) => {
 };
 
 const iconFor = (log: AuditLog) => {
-  if (log.entity_type === 'payments') return { Icon: Wallet, cls: 'bg-emerald-50 text-emerald-600' };
+  if (log.entity_type === 'payments' || log.entity_type === 'labour_payments') return { Icon: Wallet, cls: 'bg-emerald-50 text-emerald-600' };
   if (log.action === 'created') return { Icon: CirclePlus, cls: 'bg-sky-50 text-sky-600' };
   if (log.action === 'cancelled') return { Icon: Ban, cls: 'bg-red-50 text-red-600' };
   if (log.action === 'deleted') return { Icon: Trash2, cls: 'bg-red-50 text-red-600' };

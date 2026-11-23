@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import {
-  AlertTriangle, Bell, BookOpen, ChevronDown, Download, ClipboardList, FileCheck2, FilePlus2, FileSpreadsheet, FolderKanban, Home, LayoutDashboard,
+  AlertTriangle, Bell, BookOpen, CalendarCheck, ChevronDown, Download, ClipboardList, FileCheck2, FilePlus2, FileSpreadsheet, FolderKanban, HardHat, Home, LayoutDashboard,
   LogOut, Menu, Plus, ReceiptIndianRupee, Search, Settings, TrendingUp, UserPlus, Users, Wallet, WalletCards,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -33,6 +33,7 @@ const NAV: { group: string; items: NavItem[] }[] = [
     { href: '/expenses', label: 'Expenses', icon: WalletCards },
     { href: '/catalog', label: 'Item catalogue', icon: BookOpen },
   ] },
+  { group: 'Services', items: [{ href: '/labour', label: 'Labour attendance', icon: HardHat }] },
   { group: 'Insights', items: [{ href: '/reports', label: 'Reports', icon: TrendingUp }] },
 ];
 
@@ -42,6 +43,7 @@ const QUICK = [
   { href: '/quotations/new', label: 'New quotation', icon: FileCheck2, hint: 'Formal price offer' },
   { href: '/customers?new=1', label: 'Add customer', icon: UserPlus, hint: 'Client contact & GSTIN' },
   { href: '/payments?record=1', label: 'Record payment', icon: Wallet, hint: 'Against any open invoice' },
+  { href: '/labour', label: 'Mark attendance', icon: CalendarCheck, hint: 'Daily labour attendance & wages' },
 ];
 
 const isActive = (pathname: string, href: string) => (href === '/' ? pathname === '/' : pathname === href || pathname.startsWith(`${href}/`));
@@ -50,7 +52,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
   const { profile, signOut, isAdmin } = useAuth();
-  const { invoices, customers, projects, quotations, profiles, settings, error } = useData();
+  const { invoices, customers, projects, quotations, profiles, labourers, settings, error } = useData();
   const [menuOpen, setMenuOpen] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
@@ -136,7 +138,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             <button onClick={() => setMenuOpen(true)} className="grid h-10 w-10 place-items-center rounded-xl text-brand-ink hover:bg-slate-100 lg:hidden" aria-label="Open menu"><Menu size={20} /></button>
             <Link href="/" className="flex items-center gap-2 lg:hidden"><BrandMark size={30} /><span className="text-sm font-semibold tracking-wide text-brand-ink">SARATHI</span></Link>
             <button onClick={() => setPaletteOpen(true)} className="ml-2 hidden h-10 w-full max-w-md items-center gap-2.5 rounded-xl border border-border bg-white px-3.5 text-sm text-slate-400 transition hover:border-slate-300 sm:flex">
-              <Search size={16} /> Search invoices, customers, projects…
+              <Search size={16} /> Search invoices, customers, projects, labour…
               <kbd className="ml-auto rounded-md border bg-slate-50 px-1.5 py-0.5 text-[10px] font-medium text-slate-500">Ctrl K</kbd>
             </button>
             <div className="ml-auto flex items-center gap-1.5">
@@ -290,6 +292,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           <CommandGroup heading="Projects">
             {projects.slice(0, 300).map((p) => (
               <CommandItem key={p.id} value={`project ${p.project_name} ${p.project_code} ${p.location} ${p.id}`} onSelect={() => go(`/projects/${p.id}`)}><FolderKanban className="mr-2 h-4 w-4 text-slate-400" />{p.project_name}<span className="ml-2 text-xs text-muted-foreground">{p.project_code}</span></CommandItem>
+            ))}
+          </CommandGroup>
+          <CommandGroup heading="Labourers">
+            {labourers.slice(0, 300).map((l) => (
+              <CommandItem key={l.id} value={`labourer ${l.name} ${l.labour_code} ${l.trade} ${l.phone} ${l.id}`} onSelect={() => go(`/labour/${l.id}`)}><HardHat className="mr-2 h-4 w-4 text-slate-400" />{l.name}<span className="ml-2 text-xs text-muted-foreground">{l.labour_code}{l.trade ? ` · ${l.trade}` : ''}</span></CommandItem>
             ))}
           </CommandGroup>
           <CommandGroup heading="Quotations & estimates">

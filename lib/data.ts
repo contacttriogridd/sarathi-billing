@@ -1,7 +1,7 @@
 import { supabase } from '@/lib/supabase';
 import { DEFAULT_SETTINGS, uid } from '@/lib/constants';
 import type {
-  AuditLog, CatalogItem, CompanySettings, Customer, Expense, Invoice, LineItem, Payment, Profile, Project, Quotation,
+  Attendance, AttendanceStatus, AuditLog, CatalogItem, CompanySettings, Customer, Expense, Invoice, Labourer, LabourPayment, LineItem, Payment, Profile, Project, Quotation,
 } from '@/lib/types';
 
 // ---------------------------------------------------------------------------
@@ -11,19 +11,35 @@ import type {
 export const friendlyError = (error: unknown): string => {
   const e = (error ?? {}) as { message?: string; code?: string; details?: string };
   const msg = e.message || String(error);
-  if (e.code === '23503') return 'This record is linked to other records (projects, invoices or payments) and cannot be removed.';
+  if (e.code === '23503') {
+    if (/labour_attendance|labour_payments/.test(msg)) return 'This labourer has attendance or payments recorded and cannot be removed. Mark them inactive instead.';
+    return 'This record is linked to other records (projects, invoices or payments) and cannot be removed.';
+  }
   if (e.code === '23505') {
     if (msg.includes('invoice_number')) return 'That invoice number is already in use.';
     if (msg.includes('quotation_number')) return 'That quotation / estimate number is already in use.';
     if (msg.includes('project_code')) return 'That project ID is already in use.';
+    if (msg.includes('labour_code')) return 'That Labour ID is already in use.';
+    if (msg.includes('labour_attendance_one_per_day')) return 'Attendance for this labourer on that date is already marked.';
     return 'A record with the same unique value already exists.';
   }
   if (e.code === '23514') return 'One of the values is outside the allowed range. Please check the form.';
   if (e.code === '42501' || /row-level security|permission denied/i.test(msg)) return 'You do not have permission to do that. Please ask an administrator.';
   if (/Failed to fetch|NetworkError|Load failed/i.test(msg)) return 'Network error — please check your internet connection and try again.';
+  if (isMissingLabourSchema(error)) return LABOUR_SETUP_MESSAGE;
   if (e.code === 'PGRST202' || /Could not find the function/i.test(msg)) return 'Database functions are missing. Please run the Supabase schema script (see README).';
   if (e.code === '42P01' || /relation .* does not exist|Could not find the table/i.test(msg)) return 'Database tables are missing. Please run the Supabase schema script (see README).';
   return msg.replace(/^ERROR:\s*/, '');
+};
+
+export const LABOUR_SETUP_MESSAGE = 'Labour attendance needs a one-time database update: run supabase/migrations/20261123120000_labour_attendance.sql in the Supabase SQL Editor (see README).';
+
+/** True when the labour tables (or expenses.attendance_id) have not been created yet. */
+export const isMissingLabourSchema = (error: unknown) => {
+  const e = (error ?? {}) as { message?: string; code?: string };
+  const msg = e.message || String(error);
+  return /labourers|labour_attendance|labour_payments|attendance_id/.test(msg)
+    && (e.code === '42P01' || e.code === 'PGRST205' || e.code === '42703' || e.code === 'PGRST204' || /does not exist|Could not find/i.test(msg));
 };
 
 const check = <T>(result: { data: T; error: unknown }): T => {
@@ -98,7 +114,12 @@ export const loaders = {
   invoices: () => fetchAll<Invoice>('invoices', { column: 'invoice_date' }).then((rows) => rows.map(normInvoice)),
   quotations: () => fetchAll<Quotation>('quotations', { column: 'quotation_date' }).then((rows) => rows.map(normQuotation)),
   payments: () => fetchAll<Payment>('payments', { column: 'payment_date' }).then((rows) => rows.map((p) => ({ ...p, amount: n(p.amount) }))),
-  expenses: () => fetchAll<Expense>('expenses', { column: 'expense_date' }).then((rows) => rows.map((e) => ({ ...e, amount: n(e.amount) }))),
+  expenses: () => fetchAll<Expense>('expenses', { column: 'expense_date' }).then((rows) => rows.map((e) => ({ ...e, amount: n(e.amount), attendance_id: e.attendance_id ?? null }))),
+  labourers: () => fetchAll<Labourer>('labourers', { column: 'name', ascending: true })
+    .then((rows) => rows.map((l) => ({ ...l, daily_wage: n(l.daily_wage), overtime_rate: n(l.overtime_rate) }))),
+  attendance: () => fetchAll<Attendance>('labour_attendance', { column: 'work_date' })
+    .then((rows) => rows.map((a) => ({ ...a, overtime_hours: n(a.overtime_hours), daily_wage: n(a.daily_wage), overtime_rate: n(a.overtime_rate), amount: n(a.amount) }))),
+  labourPayments: () => fetchAll<LabourPayment>('labour_payments', { column: 'payment_date' }).then((rows) => rows.map((p) => ({ ...p, amount: n(p.amount) }))),
   catalog: () => fetchAll<CatalogItem>('catalog_items', { column: 'name', ascending: true }).then((rows) => rows.map((c) => ({ ...c, rate: n(c.rate), tax_rate: n(c.tax_rate) }))),
   profiles: () => fetchAll<Profile>('profiles', { column: 'created_at', ascending: true }),
 };
@@ -182,6 +203,34 @@ export const fetchAudit = async (opts: { entityId?: string; entityIds?: string[]
 };
 
 // ---------------------------------------------------------------------------
+// Labour attendance
+// ---------------------------------------------------------------------------
+
+export type AttendanceWrite = {
+  labourer_id: string; work_date: string; status?: AttendanceStatus; project_id?: string | null;
+  overtime_hours?: number; daily_wage?: number; overtime_rate?: number; notes?: string;
+};
+
+/**
+ * Marks attendance — one row per labourer per day, so an existing day is updated in place.
+ * The database works out the wage and keeps the matching Labour expense in sync.
+ * Rows in one call must have the same fields (missing fields would be sent as null).
+ */
+export const saveAttendance = async (rows: AttendanceWrite[], opts: { onlyNew?: boolean } = {}): Promise<Attendance[]> => {
+  if (!rows.length) return [];
+  // onlyNew: days someone else marked in the meantime are left untouched
+  const data = check(await supabase.from('labour_attendance').upsert(rows, { onConflict: 'labourer_id,work_date', ignoreDuplicates: !!opts.onlyNew }).select());
+  return ((data ?? []) as Attendance[]).map((a) => ({ ...a, overtime_hours: n(a.overtime_hours), daily_wage: n(a.daily_wage), overtime_rate: n(a.overtime_rate), amount: n(a.amount) }));
+};
+
+/** Applies new rates to a labourer's attendance on or after a date; wages and expenses are recomputed by the database. */
+export const repriceAttendance = async (labourerId: string, fromDate: string, dailyWage: number, overtimeRate: number) => {
+  const data = check(await supabase.from('labour_attendance').update({ daily_wage: dailyWage, overtime_rate: overtimeRate })
+    .eq('labourer_id', labourerId).gte('work_date', fromDate).select('id'));
+  return (data ?? []).length;
+};
+
+// ---------------------------------------------------------------------------
 // Shareable PDF links (private bucket + signed URL)
 // ---------------------------------------------------------------------------
 
@@ -198,13 +247,21 @@ export const uploadShareablePdf = async (path: string, bytes: Uint8Array, days =
 // Backup & restore
 // ---------------------------------------------------------------------------
 
-const BACKUP_TABLES = ['customers', 'projects', 'catalog_items', 'expenses', 'quotations', 'quotation_items', 'invoices', 'invoice_items', 'payments'] as const;
+// labour_attendance must come before expenses (expenses.attendance_id references it)
+const BACKUP_TABLES = ['customers', 'projects', 'catalog_items', 'labourers', 'labour_attendance', 'labour_payments', 'expenses', 'quotations', 'quotation_items', 'invoices', 'invoice_items', 'payments'] as const;
+const LABOUR_TABLES: readonly string[] = ['labourers', 'labour_attendance', 'labour_payments'];
 
 export const exportBackup = async () => {
   const settings = check(await supabase.from('company_settings').select('*').eq('id', 1).maybeSingle());
   const data: Record<string, unknown[]> = {};
   for (const table of BACKUP_TABLES) {
-    data[table] = await fetchAll<Record<string, unknown>>(table, { column: 'created_at', ascending: true });
+    try {
+      data[table] = await fetchAll<Record<string, unknown>>(table, { column: 'created_at', ascending: true });
+    } catch (e) {
+      // databases without the labour update simply have no labour data to back up
+      if (LABOUR_TABLES.includes(table) && isMissingLabourSchema(e)) continue;
+      throw e;
+    }
   }
   return { app: 'sarathi-billing', version: 1, exported_at: new Date().toISOString(), company_settings: settings, data };
 };
@@ -222,9 +279,14 @@ export const restoreBackup = async (backup: { app?: string; company_settings?: R
     customers: ['created_by'],
     projects: ['created_by'],
     expenses: ['created_by'],
+    labourers: ['created_by'],
+    labour_attendance: ['created_by', 'updated_by'],
+    labour_payments: ['created_by'],
   };
   for (const table of BACKUP_TABLES) {
-    const rows = (backup.data[table] ?? []).map((r) => strip(r, strippedCols[table] ?? []));
+    // attendance wages are re-created as expenses by the database when attendance is restored
+    const source = (backup.data[table] ?? []).filter((r) => table !== 'expenses' || !r.attendance_id);
+    const rows = source.map((r) => strip(r, strippedCols[table] ?? []));
     if (!rows.length) continue;
     onProgress?.(`${table.replace('_', ' ')} (${rows.length})`);
     if (table === 'invoices') {

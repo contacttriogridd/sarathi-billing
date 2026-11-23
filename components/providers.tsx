@@ -4,8 +4,8 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import type { Session } from '@supabase/supabase-js';
 import { supabase, isSupabaseConfigured } from '@/lib/supabase';
 import { DEFAULT_SETTINGS } from '@/lib/constants';
-import { friendlyError, loaders, type CollectionKey } from '@/lib/data';
-import type { CatalogItem, CompanySettings, Customer, Expense, Invoice, Payment, Profile, Project, Quotation } from '@/lib/types';
+import { friendlyError, isMissingLabourSchema, loaders, type CollectionKey } from '@/lib/data';
+import type { Attendance, CatalogItem, CompanySettings, Customer, Expense, Invoice, Labourer, LabourPayment, Payment, Profile, Project, Quotation } from '@/lib/types';
 
 // ---------------------------------------------------------------------------
 // Auth
@@ -82,6 +82,9 @@ type Collections = {
   expenses: Expense[];
   catalog: CatalogItem[];
   profiles: Profile[];
+  labourers: Labourer[];
+  attendance: Attendance[];
+  labourPayments: LabourPayment[];
 };
 
 type DataContextValue = Collections & {
@@ -91,6 +94,10 @@ type DataContextValue = Collections & {
   customerById: Map<string, Customer>;
   projectById: Map<string, Project>;
   invoiceById: Map<string, Invoice>;
+  labourerById: Map<string, Labourer>;
+  attendanceById: Map<string, Attendance>;
+  /** false until the labour attendance database update has been run */
+  labourReady: boolean;
 };
 
 const DataContext = createContext<DataContextValue | null>(null);
@@ -106,49 +113,68 @@ const TABLE_TO_KEYS: Record<string, CollectionKey[]> = {
   catalog_items: ['catalog'],
 };
 
+// Subscribed on their own channel so a database without the labour update keeps live updates for everything else.
+const LABOUR_TABLE_TO_KEYS: Record<string, CollectionKey[]> = {
+  labourers: ['labourers'],
+  labour_attendance: ['attendance', 'expenses'],
+  labour_payments: ['labourPayments'],
+};
+const LABOUR_KEYS: CollectionKey[] = ['labourers', 'attendance', 'labourPayments'];
+
 const EMPTY: Collections = {
   settings: DEFAULT_SETTINGS, customers: [], projects: [], invoices: [], quotations: [], payments: [], expenses: [], catalog: [], profiles: [],
+  labourers: [], attendance: [], labourPayments: [],
 };
 
 export function DataProvider({ children }: { children: React.ReactNode }) {
   const [data, setData] = useState<Collections>(EMPTY);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [labourReady, setLabourReady] = useState(true);
   const pending = useRef(new Set<CollectionKey>());
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const refresh = useCallback(async (...keys: CollectionKey[]) => {
     const list = keys.length ? Array.from(new Set(keys)) : (Object.keys(loaders) as CollectionKey[]);
-    try {
-      const results = await Promise.all(list.map((k) => loaders[k]()));
-      setData((prev) => {
-        const next = { ...prev } as Record<string, unknown>;
-        list.forEach((k, i) => { next[k] = results[i]; });
-        return next as Collections;
-      });
-      setError(null);
-    } catch (e) {
-      setError(friendlyError(e));
-    }
+    // Each collection loads independently, so one failing table never blanks the whole workspace.
+    const results = await Promise.allSettled(list.map((k) => loaders[k]()));
+    setData((prev) => {
+      const next = { ...prev } as Record<string, unknown>;
+      list.forEach((k, i) => { const r = results[i]; if (r.status === 'fulfilled') next[k] = r.value; });
+      return next as Collections;
+    });
+    const failures = results.map((r, i) => ({ key: list[i], r })).filter((x): x is { key: CollectionKey; r: PromiseRejectedResult } => x.r.status === 'rejected');
+    const labourMissing = failures.some((f) => isMissingLabourSchema(f.r.reason));
+    if (labourMissing) setLabourReady(false);
+    else if (list.some((k) => LABOUR_KEYS.includes(k)) && !failures.some((f) => LABOUR_KEYS.includes(f.key))) setLabourReady(true);
+    // a missing labour update is reported on the labour pages, not as a workspace-wide error
+    const blocking = failures.find((f) => !isMissingLabourSchema(f.r.reason));
+    setError(blocking ? friendlyError(blocking.r.reason) : null);
   }, []);
 
   useEffect(() => {
     let mounted = true;
     refresh().finally(() => { if (mounted) setLoading(false); });
 
-    const channel = supabase.channel('workspace-changes');
-    Object.keys(TABLE_TO_KEYS).forEach((table) => {
-      channel.on('postgres_changes', { event: '*', schema: 'public', table }, () => {
-        TABLE_TO_KEYS[table].forEach((k) => pending.current.add(k));
-        if (timer.current) clearTimeout(timer.current);
-        timer.current = setTimeout(() => {
-          const keys = Array.from(pending.current);
-          pending.current.clear();
-          void refresh(...keys);
-        }, 500);
+    const queue = (keys: CollectionKey[]) => {
+      keys.forEach((k) => pending.current.add(k));
+      if (timer.current) clearTimeout(timer.current);
+      timer.current = setTimeout(() => {
+        const next = Array.from(pending.current);
+        pending.current.clear();
+        void refresh(...next);
+      }, 500);
+    };
+    const subscribe = (name: string, tables: Record<string, CollectionKey[]>) => {
+      const ch = supabase.channel(name);
+      Object.keys(tables).forEach((table) => {
+        ch.on('postgres_changes', { event: '*', schema: 'public', table }, () => queue(tables[table]));
       });
-    });
-    channel.subscribe();
+      ch.subscribe();
+      return ch;
+    };
+    const channel = subscribe('workspace-changes', TABLE_TO_KEYS);
+    const labourChannel = subscribe('labour-changes', LABOUR_TABLE_TO_KEYS);
 
     const onFocus = () => { if (document.visibilityState === 'visible') void refresh('invoices', 'payments'); };
     document.addEventListener('visibilitychange', onFocus);
@@ -156,6 +182,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
       mounted = false;
       document.removeEventListener('visibilitychange', onFocus);
       void supabase.removeChannel(channel);
+      void supabase.removeChannel(labourChannel);
       if (timer.current) clearTimeout(timer.current);
     };
   }, [refresh]);
@@ -168,7 +195,10 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
     customerById: new Map(data.customers.map((c) => [c.id, c])),
     projectById: new Map(data.projects.map((p) => [p.id, p])),
     invoiceById: new Map(data.invoices.map((i) => [i.id, i])),
-  }), [data, loading, error, refresh]);
+    labourerById: new Map(data.labourers.map((l) => [l.id, l])),
+    attendanceById: new Map(data.attendance.map((a) => [a.id, a])),
+    labourReady,
+  }), [data, loading, error, refresh, labourReady]);
 
   return <DataContext.Provider value={value}>{children}</DataContext.Provider>;
 }

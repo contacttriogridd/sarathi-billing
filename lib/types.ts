@@ -299,6 +299,59 @@ export type Expense = {
   payment_method: string;
   reference: string;
   notes: string;
+  /** set when the expense is the wage of a labour attendance day (managed by the database) */
+  attendance_id: string | null;
+  created_at: string;
+};
+
+export type Labourer = {
+  id: string;
+  labour_code: string;
+  name: string;
+  phone: string;
+  trade: string;
+  daily_wage: number;
+  /** per overtime hour */
+  overtime_rate: number;
+  default_project_id: string | null;
+  joined_on: string | null;
+  active: boolean;
+  notes: string;
+  created_at: string;
+  updated_at?: string;
+};
+
+export type AttendanceStatus = 'Present' | 'Half day' | 'Absent';
+
+export type Attendance = {
+  id: string;
+  labourer_id: string;
+  project_id: string | null;
+  work_date: string;
+  status: AttendanceStatus;
+  overtime_hours: number;
+  /** rates copied from the labourer when the day was marked */
+  daily_wage: number;
+  overtime_rate: number;
+  /** wage for the day, computed in the database */
+  amount: number;
+  notes: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type LabourPaymentKind = 'Wages' | 'Advance';
+
+export type LabourPayment = {
+  id: string;
+  labourer_id: string;
+  project_id: string | null;
+  payment_date: string;
+  kind: LabourPaymentKind;
+  amount: number;
+  method: string;
+  reference: string;
+  notes: string;
   created_at: string;
 };
 

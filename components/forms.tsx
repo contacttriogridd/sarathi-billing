@@ -374,7 +374,7 @@ export function ExpenseDialog({ open, onOpenChange, expense, defaultProjectId }:
         <form onSubmit={submit} className="mt-2 grid gap-4 sm:grid-cols-2">
           <Field label="Amount (₹)" required><NumberInput value={form.amount ?? 0} onValue={(v) => set({ amount: v ?? 0 })} autoFocus className="text-lg font-semibold" /></Field>
           <Field label="Date" required><TextInput type="date" value={form.expense_date ?? ''} onChange={(e) => set({ expense_date: e.target.value })} /></Field>
-          <Field label="Category"><SelectNative value={form.category} onChange={(e) => set({ category: e.target.value })}>{EXPENSE_CATEGORIES.map((c) => <option key={c}>{c}</option>)}</SelectNative></Field>
+          <Field label="Category" hint={form.category === 'Labour' ? 'Daily-wage labourers marked in Labour attendance are added automatically — record only other labour costs here.' : undefined}><SelectNative value={form.category} onChange={(e) => set({ category: e.target.value })}>{EXPENSE_CATEGORIES.map((c) => <option key={c}>{c}</option>)}</SelectNative></Field>
           <Field label="Project"><SelectNative value={form.project_id ?? ''} onChange={(e) => set({ project_id: e.target.value || null })}><option value="">General / not project specific</option>{projects.map((p) => <option key={p.id} value={p.id}>{p.project_name}</option>)}</SelectNative></Field>
           <Field label="Vendor / paid to"><TextInput value={form.vendor ?? ''} onChange={(e) => set({ vendor: e.target.value })} placeholder="Supplier or worker" /></Field>
           <Field label="Payment method"><SelectNative value={form.payment_method} onChange={(e) => set({ payment_method: e.target.value })}>{PAYMENT_METHODS.map((m) => <option key={m}>{m}</option>)}</SelectNative></Field>

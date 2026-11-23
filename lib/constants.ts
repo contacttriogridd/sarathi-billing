@@ -48,6 +48,12 @@ export const INVOICE_STATUSES = ['Draft', 'Sent', 'Partially Paid', 'Paid', 'Ove
 export const QUOTATION_STATUSES = ['Draft', 'Sent', 'Approved', 'Rejected', 'Expired', 'Converted'] as const;
 export const EXPENSE_CATEGORIES = ['Material', 'Labour', 'Subcontractor', 'Equipment', 'Transport', 'Fuel', 'Site expenses', 'Office', 'Salary', 'Other'];
 export const CATALOG_CATEGORIES = ['Material', 'Labour', 'Work', 'Equipment', 'Service'];
+export const LABOUR_TRADES = [
+  'Mason', 'Helper', 'Carpenter', 'Bar bender', 'Centring', 'Electrician', 'Plumber', 'Painter', 'Tile layer',
+  'Welder', 'Fabricator', 'Operator', 'Driver', 'Watchman', 'Supervisor', 'Other',
+];
+export const ATTENDANCE_STATUSES = ['Present', 'Half day', 'Absent'] as const;
+export const LABOUR_PAYMENT_KINDS = ['Wages', 'Advance'] as const;
 export const GST_RATES = [0, 5, 12, 18, 28];
 
 export const CONSTRUCTION_STAGES = [

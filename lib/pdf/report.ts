@@ -3,16 +3,9 @@ import { A4, Canvas, INK, LINE, MUTED, WHITE, hex, tint } from '@/lib/pdf/engine
 import { amount as money, fmtDateTime, qty } from '@/lib/format';
 import type { CompanySettings } from '@/lib/types';
 import { optionsFor } from '@/lib/pdf/options';
+import { reportTables, type ReportColumn, type ReportSection, type ReportSpec } from '@/lib/report-spec';
 
-export type ReportColumn = { key: string; label: string; align?: 'left' | 'right' | 'center'; weight?: number; format?: 'money' | 'text' | 'number' };
-export type ReportSpec = {
-  title: string;
-  subtitle?: string;
-  columns: ReportColumn[];
-  rows: Record<string, string | number | null | undefined>[];
-  totals?: Record<string, string | number | null | undefined>;
-  summary?: { label: string; value: string }[];
-};
+export type { ReportColumn, ReportRow, ReportSection, ReportSpec } from '@/lib/report-spec';
 
 const cell = (value: unknown, format?: ReportColumn['format']) => {
   if (value === null || value === undefined || value === '') return '—';
@@ -25,7 +18,8 @@ const cell = (value: unknown, format?: ReportColumn['format']) => {
 export async function generateReportPdf(spec: ReportSpec, settings: CompanySettings) {
   const o = optionsFor(settings, undefined);
   const accent = o.template === 'mono' ? rgb(0.07, 0.07, 0.07) : hex(o.accentColor);
-  const landscape = spec.columns.length > 6;
+  const tables = reportTables(spec);
+  const landscape = Math.max(0, ...tables.map((t) => t.columns.length)) > 6;
   const W = landscape ? A4.height : A4.width;
   const H = landscape ? A4.width : A4.height;
   const c = await Canvas.create(o.font, { title: spec.title, author: settings.company_name });
@@ -54,6 +48,22 @@ export async function generateReportPdf(spec: ReportSpec, settings: CompanySetti
   c.line(c.left, c.y, right, c.y, LINE, 0.7);
   c.y -= 14;
 
+  if (spec.info?.length) {
+    const per = landscape ? 4 : 3;
+    const colW = width / per;
+    for (let i = 0; i < spec.info.length; i += per) {
+      const row = spec.info.slice(i, i + per);
+      const wrapped = row.map((item) => c.wrap(item.value || '—', 8.6, colW - 12, true).slice(0, 3));
+      row.forEach((item, j) => {
+        const x = c.left + j * colW;
+        c.text(item.label.toUpperCase(), x, c.y, { size: 6.4, bold: true, color: MUTED, spacing: 0.5 });
+        wrapped[j].forEach((line, li) => c.text(line, x, c.y - 10 - li * 10.4, { size: 8.6, bold: true, color: INK }));
+      });
+      c.y -= 16 + Math.max(...wrapped.map((w) => w.length)) * 10.4;
+    }
+    c.y -= 4;
+  }
+
   if (spec.summary?.length) {
     const per = Math.min(spec.summary.length, landscape ? 6 : 4);
     const gap = 8;
@@ -69,55 +79,77 @@ export async function generateReportPdf(spec: ReportSpec, settings: CompanySetti
     c.y -= 58;
   }
 
-  const totalWeight = spec.columns.reduce((s, col) => s + (col.weight ?? 1), 0);
-  const widths = spec.columns.map((col) => (width * (col.weight ?? 1)) / totalWeight);
   const headerH = 20;
   const pad = 4.5;
 
-  const drawHeader = () => {
-    c.rect(c.left, c.y, width, headerH, { fill: accent });
-    let x = c.left;
-    spec.columns.forEach((col, i) => {
-      const anchor = col.align === 'right' ? x + widths[i] - pad : col.align === 'center' ? x + widths[i] / 2 : x + pad;
-      c.text(col.label, anchor, c.y - 6.6, { size: 7.4, bold: true, color: WHITE, align: col.align });
-      x += widths[i];
-    });
-    c.y -= headerH;
-  };
+  const drawTable = (table: ReportSection & { main?: boolean }) => {
+    const totalWeight = table.columns.reduce((s, col) => s + (col.weight ?? 1), 0);
+    const widths = table.columns.map((col) => (width * (col.weight ?? 1)) / totalWeight);
 
-  const ensure = (h: number) => {
-    if (c.y - h < 50) {
-      addPage();
-      c.text(`${settings.company_name}  ·  ${spec.title} (continued)`, c.left, c.y, { size: 8, color: MUTED });
-      c.y -= 16;
-      drawHeader();
-    }
-  };
-
-  drawHeader();
-  const drawRow = (row: Record<string, unknown>, index: number, bold = false) => {
-    const lines = spec.columns.map((col, i) => c.wrap(cell(row[col.key], col.format), 7.8, widths[i] - pad * 2, bold));
-    const rowH = Math.max(...lines.map((l) => l.length)) * 10.2 + pad * 2;
-    ensure(rowH);
-    if (bold) c.rect(c.left, c.y, width, rowH, { fill: tint(accent, 0.9) });
-    else if (index % 2 === 1) c.rect(c.left, c.y, width, rowH, { fill: tint(accent, 0.965) });
-    let x = c.left;
-    spec.columns.forEach((col, i) => {
-      lines[i].forEach((line, li) => {
+    const drawHeader = () => {
+      c.rect(c.left, c.y, width, headerH, { fill: accent });
+      let x = c.left;
+      table.columns.forEach((col, i) => {
         const anchor = col.align === 'right' ? x + widths[i] - pad : col.align === 'center' ? x + widths[i] / 2 : x + pad;
-        c.text(line, anchor, c.y - pad - li * 10.2, { size: 7.8, bold, align: col.align });
+        c.text(col.label, anchor, c.y - 6.6, { size: 7.4, bold: true, color: WHITE, align: col.align });
+        x += widths[i];
       });
-      x += widths[i];
-    });
-    c.y -= rowH;
+      c.y -= headerH;
+    };
+
+    const ensure = (h: number) => {
+      if (c.y - h < 50) {
+        addPage();
+        c.text(`${settings.company_name}  ·  ${spec.title}${table.title ? `  ·  ${table.title}` : ''} (continued)`, c.left, c.y, { size: 8, color: MUTED });
+        c.y -= 16;
+        drawHeader();
+      }
+    };
+
+    if (table.title) {
+      // keep the section title with its header and first row
+      if (c.y - 62 < 50) addPage();
+      c.text(table.title, c.left, c.y, { size: 10.5, bold: true, color: accent });
+      c.y -= 16;
+    }
+    drawHeader();
+
+    const drawRow = (row: Record<string, unknown>, index: number, bold = false) => {
+      const lines = table.columns.map((col, i) => c.wrap(cell(row[col.key], col.format), 7.8, widths[i] - pad * 2, bold));
+      const rowH = Math.max(...lines.map((l) => l.length)) * 10.2 + pad * 2;
+      ensure(rowH);
+      if (bold) c.rect(c.left, c.y, width, rowH, { fill: tint(accent, 0.9) });
+      else if (index % 2 === 1) c.rect(c.left, c.y, width, rowH, { fill: tint(accent, 0.965) });
+      let x = c.left;
+      table.columns.forEach((col, i) => {
+        lines[i].forEach((line, li) => {
+          const anchor = col.align === 'right' ? x + widths[i] - pad : col.align === 'center' ? x + widths[i] / 2 : x + pad;
+          c.text(line, anchor, c.y - pad - li * 10.2, { size: 7.8, bold, align: col.align });
+        });
+        x += widths[i];
+      });
+      c.y -= rowH;
+    };
+
+    if (!table.rows.length) {
+      c.text(table.empty ?? 'No records for the selected period.', c.left + width / 2, c.y - 12, { size: 8.4, color: MUTED, align: 'center' });
+      c.y -= 30;
+    }
+    table.rows.forEach((row, i) => drawRow(row, i));
+    if (table.totals && table.rows.length) drawRow(table.totals, 0, true);
   };
 
-  if (!spec.rows.length) {
-    c.text('No records for the selected period.', c.left + width / 2, c.y - 12, { size: 8.4, color: MUTED, align: 'center' });
-    c.y -= 30;
+  tables.forEach((table, i) => {
+    if (i > 0) c.y -= 18;
+    drawTable(table);
+  });
+
+  if (spec.note) {
+    const lines = c.wrap(spec.note, 7.4, width);
+    if (c.y - 14 - lines.length * 10 < 50) addPage();
+    c.y -= 14;
+    lines.forEach((line) => { c.text(line, c.left, c.y, { size: 7.4, color: MUTED }); c.y -= 10; });
   }
-  spec.rows.forEach((row, i) => drawRow(row, i));
-  if (spec.totals) drawRow(spec.totals, 0, true);
 
   const total = c.pages.length;
   c.pages.forEach((page, i) => {
