@@ -9,8 +9,8 @@ import { Card, ConfirmDialog, Field, NumberInput, SelectNative, Segmented, Spinn
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Textarea } from '@/components/ui/textarea';
 import { LABOUR_PAYMENT_KINDS, LABOUR_TRADES, PAYMENT_METHODS } from '@/lib/constants';
-import { LABOUR_SETUP_MESSAGE, deleteRow, friendlyError, repriceAttendance, saveAttendance, upsertRow } from '@/lib/data';
-import { fmtDate, inr, isValidPhone, todayISO } from '@/lib/format';
+import { LABOUR_OUTDATED_MESSAGE, LABOUR_SETUP_MESSAGE, deleteRow, friendlyError, repriceAttendance, saveAttendance, upsertRow } from '@/lib/data';
+import { fmtDate, inr, isValidPhone, monthKey, todayISO } from '@/lib/format';
 import { MAX_SHIFTS, SHIFT_OPTIONS, attendanceAmount, fmtShifts, labourBalance, shiftNumber, shiftTone, suggestedOvertimeRate } from '@/lib/labour';
 import type { Attendance, Labourer, LabourPayment } from '@/lib/types';
 
@@ -36,14 +36,16 @@ function FieldGroup({ label, className, children }: { label: string; className?:
   );
 }
 
-/** Shown on the labour pages until the labour attendance database update has been run. */
+/** Shown on the labour pages until the labour database updates have been run, or if wages are being calculated wrongly. */
 export function LabourSetupNotice() {
+  const { labourIssue } = useData();
+  const outdated = labourIssue === LABOUR_OUTDATED_MESSAGE;
   return (
-    <Card className="flex items-start gap-3 border-amber-200 bg-amber-50/70 p-5 text-sm text-amber-900">
+    <Card className={cn('flex items-start gap-3 p-5 text-sm', outdated ? 'border-red-200 bg-red-50/70 text-red-900' : 'border-amber-200 bg-amber-50/70 text-amber-900')}>
       <DatabaseZap size={20} className="mt-0.5 shrink-0" />
       <div>
-        <p className="font-semibold">One-time setup needed</p>
-        <p className="mt-1 leading-6">{LABOUR_SETUP_MESSAGE}</p>
+        <p className="font-semibold">{outdated ? 'Wage calculation needs fixing' : 'One-time setup needed'}</p>
+        <p className="mt-1 leading-6">{labourIssue ?? LABOUR_SETUP_MESSAGE}</p>
       </div>
     </Card>
   );
@@ -86,8 +88,9 @@ export function LabourerDialog({ open, onOpenChange, labourer, defaultProjectId,
   const [apply, setApply] = useState(false);
   const [busy, setBusy] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
+  // a changed rate applies to this month's attendance by default (shown in the form, with the number of days)
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { if (open) { setForm(labourer ? { ...labourer } : blank()); setOtTouched(!!labourer); setApply(false); setApplyFrom(todayISO()); setErrors({}); } }, [open, labourer]);
+  useEffect(() => { if (open) { setForm(labourer ? { ...labourer } : blank()); setOtTouched(!!labourer); setApply(true); setApplyFrom(`${monthKey(todayISO())}-01`); setErrors({}); } }, [open, labourer]);
   const set = (patch: Partial<Labourer>) => setForm((f) => ({ ...f, ...patch }));
   const activeProjects = useMemo(() => projects.filter((p) => (p.status !== 'Completed' && p.status !== 'Cancelled') || p.id === form.default_project_id), [projects, form.default_project_id]);
   const ratesChanged = !!labourer && (form.daily_wage !== labourer.daily_wage || form.overtime_rate !== labourer.overtime_rate);
@@ -140,12 +143,12 @@ export function LabourerDialog({ open, onOpenChange, labourer, defaultProjectId,
           </Field>
           {ratesChanged && (
             <div className="rounded-xl bg-sky-50 p-3 sm:col-span-2">
-              <Toggle checked={apply} onChange={setApply} label="Apply the new rates to attendance already marked" description="Days marked earlier keep the rate they were marked with unless you apply it here." />
+              <Toggle checked={apply} onChange={setApply} label="Use the new rate for days already marked" description="Each day keeps the rate it was marked with. Leave this on to recalculate the days from the date below with the new rate." />
               {apply && (
                 <div className="mt-2 flex flex-wrap items-center gap-2 text-sm">
                   <span className="text-slate-600">From</span>
                   <TextInput type="date" value={applyFrom} onChange={(e) => setApplyFrom(e.target.value)} className="w-auto" />
-                  <span className="text-xs text-muted-foreground">{affected} day{affected === 1 ? '' : 's'} will be re-priced, and their expenses updated.</span>
+                  <span className="text-xs text-muted-foreground">{affected} day{affected === 1 ? '' : 's'} will be recalculated at {inr(form.daily_wage ?? 0)} per shift, and their expenses updated.</span>
                 </div>
               )}
             </div>

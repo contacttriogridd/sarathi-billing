@@ -217,7 +217,11 @@ function LabourInner() {
                       <Link href={`/labour/${l.id}`} className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-brand-navy/[0.07] text-xs font-semibold text-brand-navy">{initials(l.name)}</Link>
                       <div className="min-w-0">
                         <Link href={`/labour/${l.id}`} className="block truncate text-sm font-semibold text-brand-ink hover:underline">{l.name}</Link>
-                        <p className="truncate text-xs text-muted-foreground">{l.labour_code}{l.trade ? ` · ${l.trade}` : ''} · {inr(rec?.daily_wage ?? l.daily_wage, 0)}/shift{showSite ? ` · ${showSite}` : ''}</p>
+                        <p className="truncate text-xs text-muted-foreground">
+                          {l.labour_code}{l.trade ? ` · ${l.trade}` : ''} · {inr(rec?.daily_wage ?? l.daily_wage, 0)}/shift
+                          {rec && rec.daily_wage !== l.daily_wage && <span className="font-medium text-amber-700" title="This day was marked at an older rate. Change it from the labourer's page or the ⋯ dialog."> (current rate {inr(l.daily_wage, 0)})</span>}
+                          {showSite ? ` · ${showSite}` : ''}
+                        </p>
                       </div>
                       <p className="num ml-auto shrink-0 text-sm font-semibold sm:hidden">{rec ? inr(rec.amount, 0) : ''}</p>
                     </div>

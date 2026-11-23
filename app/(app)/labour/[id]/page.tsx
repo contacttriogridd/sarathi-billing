@@ -9,7 +9,7 @@ import { cn } from '@/lib/utils';
 import { useAuth, useData } from '@/components/providers';
 import { Card, ConfirmDialog, LoadingPanel, Segmented, StatCard } from '@/components/common';
 import { AttendanceDialog, LabourPaymentDialog, LabourSetupNotice, LabourerDialog } from '@/components/labour-forms';
-import { deleteRow, friendlyError } from '@/lib/data';
+import { deleteRow, friendlyError, repriceAttendance } from '@/lib/data';
 import { fmtDate, inr, monthKey, qty, round2, slug, todayISO } from '@/lib/format';
 import { fmtHours, fmtShifts, labourBalance, monthBounds, monthGrid, monthTitle, shiftMonth, shiftShort, shiftTone, summariseAttendance, weekday } from '@/lib/labour';
 import { buildLabourerStatement } from '@/lib/reports';
@@ -34,6 +34,7 @@ export default function LabourerPage({ params }: { params: { id: string } }) {
   const [day, setDay] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [pdfBusy, setPdfBusy] = useState(false);
+  const [repricing, setRepricing] = useState(false);
 
   const d = useMemo(() => {
     const att = attendance.filter((a) => a.labourer_id === params.id);
@@ -49,6 +50,21 @@ export default function LabourerPage({ params }: { params: { id: string } }) {
   if (!lab) return <div className="py-20 text-center text-sm text-muted-foreground">Labourer not found. <Link href="/labour?tab=labourers" className="font-semibold text-brand-navy-3">Back</Link></div>;
   const site = lab.default_project_id ? projectById.get(lab.default_project_id) : undefined;
   const dayRecord = day ? d.byDate.get(day) ?? attendance.find((a) => a.labourer_id === lab.id && a.work_date === day) ?? null : null;
+  const oldRateDays = d.monthAtt.filter((a) => a.daily_wage !== lab.daily_wage || a.overtime_rate !== lab.overtime_rate);
+
+  const applyCurrentRate = async () => {
+    setRepricing(true);
+    try {
+      const { from, to } = monthBounds(month);
+      const n = await repriceAttendance(lab.id, from, lab.daily_wage, lab.overtime_rate, to);
+      await refresh('attendance', 'expenses');
+      toast.success(`${n} day${n === 1 ? '' : 's'} recalculated at ${inr(lab.daily_wage, 0)} per shift`);
+    } catch (e) {
+      toast.error(friendlyError(e));
+    } finally {
+      setRepricing(false);
+    }
+  };
 
   const downloadStatement = async () => {
     setPdfBusy(true);
@@ -97,6 +113,18 @@ export default function LabourerPage({ params }: { params: { id: string } }) {
         <StatCard label={d.balance.balance < 0 ? 'Advance outstanding' : 'Balance due'} value={inr(Math.abs(d.balance.balance), 0)} icon={HandCoins} tone={d.balance.balance < 0 ? 'red' : d.balance.balance > 0 ? 'orange' : 'green'}
           hint={d.balance.balance < 0 ? 'To recover from future wages' : d.balance.balance > 0 ? 'Earned but not yet paid' : 'Fully settled'} />
       </div>
+
+      {oldRateDays.length > 0 && (
+        <Card className="flex flex-col gap-3 border-amber-200 bg-amber-50/70 p-4 text-sm text-amber-900 sm:flex-row sm:items-center sm:justify-between">
+          <p>
+            <b>{oldRateDays.length} day{oldRateDays.length === 1 ? '' : 's'} in {monthTitle(month)}</b> {oldRateDays.length === 1 ? 'was' : 'were'} marked at an older rate
+            ({Array.from(new Set(oldRateDays.map((a) => inr(a.daily_wage, 0)))).join(', ')} per shift). The current rate is <b>{inr(lab.daily_wage, 0)} per shift</b>.
+          </p>
+          <button onClick={applyCurrentRate} disabled={repricing} className="flex h-9 shrink-0 items-center justify-center gap-2 rounded-lg bg-amber-600 px-3.5 text-sm font-semibold text-white hover:bg-amber-700 disabled:opacity-60">
+            {repricing && <Loader2 size={15} className="animate-spin" />}Use {inr(lab.daily_wage, 0)} for {oldRateDays.length === 1 ? 'this day' : 'these days'}
+          </button>
+        </Card>
+      )}
 
       <Card className="p-4 sm:p-5">
         <div className="mb-4 flex items-center justify-between gap-3">

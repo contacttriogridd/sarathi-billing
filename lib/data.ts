@@ -1,5 +1,6 @@
 import { supabase } from '@/lib/supabase';
 import { DEFAULT_SETTINGS, uid } from '@/lib/constants';
+import { wageMismatch } from '@/lib/labour';
 import type {
   Attendance, AuditLog, CatalogItem, CompanySettings, Customer, Expense, Invoice, Labourer, LabourPayment, LineItem, Payment, Profile, Project, Quotation,
 } from '@/lib/types';
@@ -32,7 +33,8 @@ export const friendlyError = (error: unknown): string => {
   return msg.replace(/^ERROR:\s*/, '');
 };
 
-export const LABOUR_SETUP_MESSAGE = 'Labour attendance needs a one-time database update. In the Supabase SQL Editor run supabase/migrations/20261123120000_labour_attendance.sql (skip it if you already have) and then 20261123180000_labour_shift_wages.sql (see README).';
+export const LABOUR_OUTDATED_MESSAGE = 'Some labour wages in the database do not equal shifts × wage per shift, so its wage calculation is out of date. In the Supabase SQL Editor run supabase/migrations/20261123180000_labour_shift_wages.sql again: it fixes the calculation and repairs the wrong days and their expenses.';
+export const LABOUR_SETUP_MESSAGE ='Labour attendance needs a one-time database update. In the Supabase SQL Editor run supabase/migrations/20261123120000_labour_attendance.sql (skip it if you already have) and then 20261123180000_labour_shift_wages.sql (see README).';
 
 /** True when the labour tables (or expenses.attendance_id) have not been created yet. */
 export const isMissingLabourSchema = (error: unknown) => {
@@ -225,13 +227,18 @@ export const saveAttendance = async (rows: AttendanceWrite[], opts: { onlyNew?: 
   if (!rows.length) return [];
   // onlyNew: days someone else marked in the meantime are left untouched
   const data = check(await supabase.from('labour_attendance').upsert(rows, { onConflict: 'labourer_id,work_date', ignoreDuplicates: !!opts.onlyNew }).select(ATTENDANCE_COLUMNS));
-  return ((data ?? []) as unknown as Attendance[]).map(normAttendance);
+  const saved = ((data ?? []) as unknown as Attendance[]).map(normAttendance);
+  // the database works out the wage; if it doesn't equal shifts × rate its wage functions are out of date
+  if (saved.some(wageMismatch)) throw new Error(LABOUR_OUTDATED_MESSAGE);
+  return saved;
 };
 
-/** Applies new rates to a labourer's attendance on or after a date; wages and expenses are recomputed by the database. */
-export const repriceAttendance = async (labourerId: string, fromDate: string, dailyWage: number, overtimeRate: number) => {
-  const data = check(await supabase.from('labour_attendance').update({ daily_wage: dailyWage, overtime_rate: overtimeRate })
-    .eq('labourer_id', labourerId).gte('work_date', fromDate).select('id'));
+/** Applies new rates to a labourer's attendance from a date (optionally up to a date); wages and expenses are recomputed by the database. */
+export const repriceAttendance = async (labourerId: string, fromDate: string, dailyWage: number, overtimeRate: number, toDate?: string) => {
+  let query = supabase.from('labour_attendance').update({ daily_wage: dailyWage, overtime_rate: overtimeRate })
+    .eq('labourer_id', labourerId).gte('work_date', fromDate);
+  if (toDate) query = query.lte('work_date', toDate);
+  const data = check(await query.select('id'));
   return (data ?? []).length;
 };
 

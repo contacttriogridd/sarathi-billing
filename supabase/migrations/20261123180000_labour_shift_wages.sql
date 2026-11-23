@@ -5,6 +5,8 @@
   ------------
   Supabase Dashboard → SQL Editor → paste this whole file → Run.
   Run it after 20261123120000_labour_attendance.sql. Safe to re-run; never deletes data.
+  Running it again also repairs wages saved while an older version of the wage functions
+  was active: every day is recalculated as shifts × rate per shift (+ overtime).
   Fresh installs get the same objects from the main schema file.
 
   WHAT CHANGES
@@ -117,6 +119,21 @@ DROP FUNCTION IF EXISTS public.labour_expense_description(text, text, numeric);
 UPDATE public.labour_attendance
    SET shifts = CASE status WHEN 'Present' THEN 1 WHEN 'Half day' THEN 0.5 ELSE 0 END
  WHERE shifts IS NULL;
+
+-- Repair: days saved while an older, status-based version of the wage functions was active
+-- (for example after re-running an earlier script) were paid as 1 shift whatever was tapped.
+-- Recompute the wage, status and expense line of every day that doesn't match its shifts.
+UPDATE public.labour_attendance AS a
+   SET shifts = a.shifts
+  FROM public.labourers l
+ WHERE l.id = a.labourer_id
+   AND a.shifts IS NOT NULL
+   AND (a.amount IS DISTINCT FROM round(a.daily_wage * GREATEST(a.shifts, 0) + CASE WHEN a.shifts > 0 THEN a.overtime_hours ELSE 0 END * a.overtime_rate, 2)
+        OR a.status IS DISTINCT FROM (CASE WHEN a.shifts <= 0 THEN 'Absent' WHEN a.shifts < 1 THEN 'Half day' ELSE 'Present' END)
+        OR (a.amount > 0 AND NOT EXISTS (
+              SELECT 1 FROM public.expenses e
+               WHERE e.attendance_id = a.id AND e.amount = a.amount
+                 AND e.description = public.labour_expense_description(l.trade, a.shifts, a.overtime_hours))));
 
 ALTER TABLE public.labour_attendance ALTER COLUMN shifts SET NOT NULL;
 DO $$

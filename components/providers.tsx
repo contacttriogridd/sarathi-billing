@@ -4,7 +4,8 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import type { Session } from '@supabase/supabase-js';
 import { supabase, isSupabaseConfigured } from '@/lib/supabase';
 import { DEFAULT_SETTINGS } from '@/lib/constants';
-import { friendlyError, isMissingLabourSchema, loaders, type CollectionKey } from '@/lib/data';
+import { LABOUR_OUTDATED_MESSAGE, LABOUR_SETUP_MESSAGE, friendlyError, isMissingLabourSchema, loaders, type CollectionKey } from '@/lib/data';
+import { wageMismatch } from '@/lib/labour';
 import type { Attendance, CatalogItem, CompanySettings, Customer, Expense, Invoice, Labourer, LabourPayment, Payment, Profile, Project, Quotation } from '@/lib/types';
 
 // ---------------------------------------------------------------------------
@@ -96,8 +97,10 @@ type DataContextValue = Collections & {
   invoiceById: Map<string, Invoice>;
   labourerById: Map<string, Labourer>;
   attendanceById: Map<string, Attendance>;
-  /** false until the labour attendance database update has been run */
+  /** false until the labour database updates have been run, or while its wage calculation is out of date */
   labourReady: boolean;
+  /** what to do when labourReady is false */
+  labourIssue: string | null;
 };
 
 const DataContext = createContext<DataContextValue | null>(null);
@@ -187,6 +190,9 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
     };
   }, [refresh]);
 
+  // wages are computed by the database; any day that isn't shifts × rate means its wage functions are outdated
+  const wagesOutdated = useMemo(() => data.attendance.some(wageMismatch), [data.attendance]);
+
   const value = useMemo<DataContextValue>(() => ({
     ...data,
     loading,
@@ -197,8 +203,9 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
     invoiceById: new Map(data.invoices.map((i) => [i.id, i])),
     labourerById: new Map(data.labourers.map((l) => [l.id, l])),
     attendanceById: new Map(data.attendance.map((a) => [a.id, a])),
-    labourReady,
-  }), [data, loading, error, refresh, labourReady]);
+    labourReady: labourReady && !wagesOutdated,
+    labourIssue: !labourReady ? LABOUR_SETUP_MESSAGE : wagesOutdated ? LABOUR_OUTDATED_MESSAGE : null,
+  }), [data, loading, error, refresh, labourReady, wagesOutdated]);
 
   return <DataContext.Provider value={value}>{children}</DataContext.Provider>;
 }

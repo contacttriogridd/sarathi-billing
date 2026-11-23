@@ -29,6 +29,10 @@ export const statusFromShifts = (n: number): AttendanceStatus => (n <= 0 ? 'Abse
 export const attendanceAmount = (shifts: number, ratePerShift: number, overtimeHours: number, overtimeRate: number) =>
   shifts <= 0 ? 0 : round2(ratePerShift * shifts + (overtimeHours || 0) * overtimeRate);
 
+/** True when a saved day's wage or status doesn't follow its shifts, i.e. the database computed it with an outdated formula. */
+export const wageMismatch = (a: Pick<Attendance, 'shifts' | 'status' | 'amount' | 'daily_wage' | 'overtime_hours' | 'overtime_rate'>) =>
+  Math.abs(a.amount - attendanceAmount(a.shifts, a.daily_wage, a.overtime_hours, a.overtime_rate)) > 0.009 || a.status !== statusFromShifts(a.shifts);
+
 /** Suggested overtime rate per hour for an 8-hour shift. */
 export const suggestedOvertimeRate = (ratePerShift: number) => round2(ratePerShift / 8);
 

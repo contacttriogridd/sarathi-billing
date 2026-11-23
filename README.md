@@ -20,6 +20,11 @@ SARATHI ASSOCIATES, Anitha Complex, Perumanallur, Tiruppur.
    2. `supabase/migrations/20261123180000_labour_shift_wages.sql`: shift-based wages. Existing attendance is converted (Present = 1 shift, Half day = ½ shift)
 
    Until then the *Services → Labour attendance* page shows a setup notice, and the rest of the app keeps working.
+
+   **Wages wrong (e.g. ½, 1½ or 2 shifts paid as 1 shift)?** Run `20261123180000_labour_shift_wages.sql` again.
+   It restores the shift calculation and recalculates every wrongly saved day and its expense. All three scripts
+   can be re-run in any order without undoing shift wages. The app shows a red "Wage calculation needs fixing"
+   notice whenever it finds a wage that is not shifts × rate.
 3. **Authentication → URL Configuration:**
    - *Site URL*: the address where the app is hosted, e.g. `https://billing.yourdomain.in` (or `http://localhost:3000` while testing).
    - *Redirect URLs*: add `<site-url>/reset-password` and `<site-url>/login`. Password-reset emails need this.
