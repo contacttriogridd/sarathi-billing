@@ -233,6 +233,24 @@ export const saveAttendance = async (rows: AttendanceWrite[], opts: { onlyNew?: 
   return saved;
 };
 
+/**
+ * Sets the wage per shift (and overtime rate) of several labourers at once, e.g. every Helper,
+ * and optionally recalculates their attendance from a date. The database recomputes wages and expenses.
+ */
+export const setLabourRates = async (labourerIds: string[], dailyWage: number, overtimeRate: number, recalcFrom?: string) => {
+  if (!labourerIds.length) return { labourers: 0, days: 0 };
+  const labs = check(await supabase.from('labourers').update({ daily_wage: dailyWage, overtime_rate: overtimeRate }).in('id', labourerIds).select('id'));
+  let days = 0;
+  if (recalcFrom) {
+    const rows = check(await supabase.from('labour_attendance').update({ daily_wage: dailyWage, overtime_rate: overtimeRate })
+      .in('labourer_id', labourerIds).gte('work_date', recalcFrom).select(ATTENDANCE_COLUMNS));
+    const saved = ((rows ?? []) as unknown as Attendance[]).map(normAttendance);
+    if (saved.some(wageMismatch)) throw new Error(LABOUR_OUTDATED_MESSAGE);
+    days = saved.length;
+  }
+  return { labourers: (labs ?? []).length, days };
+};
+
 /** Applies new rates to a labourer's attendance from a date (optionally up to a date); wages and expenses are recomputed by the database. */
 export const repriceAttendance = async (labourerId: string, fromDate: string, dailyWage: number, overtimeRate: number, toDate?: string) => {
   let query = supabase.from('labour_attendance').update({ daily_wage: dailyWage, overtime_rate: overtimeRate })

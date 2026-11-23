@@ -1,3 +1,4 @@
+import { STANDARD_WAGE_PER_SHIFT } from '@/lib/constants';
 import { round2 } from '@/lib/format';
 import type { Attendance, AttendanceStatus, Labourer, LabourPayment } from '@/lib/types';
 
@@ -32,6 +33,21 @@ export const attendanceAmount = (shifts: number, ratePerShift: number, overtimeH
 /** True when a saved day's wage or status doesn't follow its shifts, i.e. the database computed it with an outdated formula. */
 export const wageMismatch = (a: Pick<Attendance, 'shifts' | 'status' | 'amount' | 'daily_wage' | 'overtime_hours' | 'overtime_rate'>) =>
   Math.abs(a.amount - attendanceAmount(a.shifts, a.daily_wage, a.overtime_hours, a.overtime_rate)) > 0.009 || a.status !== statusFromShifts(a.shifts);
+
+const tradeKey = (trade: string) => (trade ?? '').trim().toLowerCase();
+/** Same trade, ignoring capitals and spaces ("Helper" = "helper "). */
+export const sameTrade = (a: string, b: string) => tradeKey(a) !== '' && tradeKey(a) === tradeKey(b);
+
+/** Usual wage per shift for a trade: the rate most active labourers of that trade get, else the standard rate. */
+export const tradeRate = (trade: string, labourers: Labourer[]): number | null => {
+  const key = tradeKey(trade);
+  if (!key) return null;
+  const counts = new Map<number, number>();
+  labourers.filter((l) => l.active && l.daily_wage > 0 && tradeKey(l.trade) === key)
+    .forEach((l) => counts.set(l.daily_wage, (counts.get(l.daily_wage) ?? 0) + 1));
+  if (counts.size) return Array.from(counts.entries()).sort((a, b) => b[1] - a[1] || b[0] - a[0])[0][0];
+  return STANDARD_WAGE_PER_SHIFT[key] ?? null;
+};
 
 /** Suggested overtime rate per hour for an 8-hour shift. */
 export const suggestedOvertimeRate = (ratePerShift: number) => round2(ratePerShift / 8);

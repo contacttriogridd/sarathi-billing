@@ -137,6 +137,7 @@ Installing needs **HTTPS**, so on phones install from the deployed address (Netl
 **Labour attendance** (menu: Services → Labour attendance)
 - Labourers with Labour ID (LAB-0001…), trade, wage per shift, overtime rate and usual site
 - **Shift-based wages:** each day records the shifts worked (Absent, ½, 1, 1½, 2, or any value up to 3). Wage for the day = shifts × wage per shift + overtime hours × overtime rate (optional)
+- **Rates by trade** (Labourers tab): set one wage per shift for every labourer of a trade, e.g. all Helpers at ₹700, and recalculate the days already marked. New labourers start at their trade's rate (Helper ₹700 by default)
 - Daily attendance sheet: one tap per labourer, "mark everyone 1 shift", per-site view, and per-day overrides for shifts, overtime, site and rate
 - Each labourer's page: month calendar (tap any day to mark or correct it), wages earned, wages paid and advances, balance due, and a monthly statement PDF
 - **Wages go into expenses automatically:** every attendance day that earns a wage becomes a *Labour* expense on its project, kept in sync by the database when the day is changed or removed. Project margins, the expense list and the profit reports include labour without any double entry

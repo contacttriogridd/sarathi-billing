@@ -9,9 +9,9 @@ import { Card, ConfirmDialog, Field, NumberInput, SelectNative, Segmented, Spinn
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Textarea } from '@/components/ui/textarea';
 import { LABOUR_PAYMENT_KINDS, LABOUR_TRADES, PAYMENT_METHODS } from '@/lib/constants';
-import { LABOUR_OUTDATED_MESSAGE, LABOUR_SETUP_MESSAGE, deleteRow, friendlyError, repriceAttendance, saveAttendance, upsertRow } from '@/lib/data';
+import { LABOUR_OUTDATED_MESSAGE, LABOUR_SETUP_MESSAGE, deleteRow, friendlyError, repriceAttendance, saveAttendance, setLabourRates, upsertRow } from '@/lib/data';
 import { fmtDate, inr, isValidPhone, monthKey, todayISO } from '@/lib/format';
-import { MAX_SHIFTS, SHIFT_OPTIONS, attendanceAmount, fmtShifts, labourBalance, shiftNumber, shiftTone, suggestedOvertimeRate } from '@/lib/labour';
+import { MAX_SHIFTS, SHIFT_OPTIONS, attendanceAmount, fmtShifts, labourBalance, sameTrade, shiftNumber, shiftTone, suggestedOvertimeRate, tradeRate } from '@/lib/labour';
 import type { Attendance, Labourer, LabourPayment } from '@/lib/types';
 
 const dialogClass = 'max-h-[92vh] overflow-y-auto rounded-2xl p-5 sm:max-w-xl sm:p-6';
@@ -80,17 +80,26 @@ export function ShiftButtons({ value, onChange, disabled }: { value: number | nu
 // ---------------------------------------------------------------------------
 
 export function LabourerDialog({ open, onOpenChange, labourer, defaultProjectId, onSaved }: { open: boolean; onOpenChange: (o: boolean) => void; labourer?: Labourer | null; defaultProjectId?: string | null; onSaved?: (l: Labourer) => void }) {
-  const { projects, attendance, refresh } = useData();
-  const blank = (): Partial<Labourer> => ({ name: '', labour_code: '', phone: '', trade: 'Helper', daily_wage: 0, overtime_rate: 0, default_project_id: defaultProjectId ?? null, joined_on: todayISO(), active: true, notes: '' });
+  const { projects, attendance, labourers, refresh } = useData();
+  const blank = (): Partial<Labourer> => {
+    const rate = tradeRate('Helper', labourers) ?? 0;
+    return { name: '', labour_code: '', phone: '', trade: 'Helper', daily_wage: rate, overtime_rate: suggestedOvertimeRate(rate), default_project_id: defaultProjectId ?? null, joined_on: todayISO(), active: true, notes: '' };
+  };
   const [form, setForm] = useState<Partial<Labourer>>(blank());
   const [otTouched, setOtTouched] = useState(false);
+  // a new labourer's wage follows the chosen trade (e.g. Helper → ₹700) until a wage is typed
+  const [wageTouched, setWageTouched] = useState(false);
+  const pickTrade = (trade: string) => {
+    const rate = !labourer && !wageTouched ? tradeRate(trade, labourers) : null;
+    set({ trade, ...(rate !== null ? { daily_wage: rate, ...(otTouched ? {} : { overtime_rate: suggestedOvertimeRate(rate) }) } : {}) });
+  };
   const [applyFrom, setApplyFrom] = useState('');
   const [apply, setApply] = useState(false);
   const [busy, setBusy] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
   // a changed rate applies to this month's attendance by default (shown in the form, with the number of days)
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { if (open) { setForm(labourer ? { ...labourer } : blank()); setOtTouched(!!labourer); setApply(true); setApplyFrom(`${monthKey(todayISO())}-01`); setErrors({}); } }, [open, labourer]);
+  useEffect(() => { if (open) { setForm(labourer ? { ...labourer } : blank()); setOtTouched(!!labourer); setWageTouched(!!labourer); setApply(true); setApplyFrom(`${monthKey(todayISO())}-01`); setErrors({}); } }, [open, labourer]);
   const set = (patch: Partial<Labourer>) => setForm((f) => ({ ...f, ...patch }));
   const activeProjects = useMemo(() => projects.filter((p) => (p.status !== 'Completed' && p.status !== 'Cancelled') || p.id === form.default_project_id), [projects, form.default_project_id]);
   const ratesChanged = !!labourer && (form.daily_wage !== labourer.daily_wage || form.overtime_rate !== labourer.overtime_rate);
@@ -129,14 +138,12 @@ export function LabourerDialog({ open, onOpenChange, labourer, defaultProjectId,
         <form onSubmit={submit} className="mt-2 grid gap-4 sm:grid-cols-2">
           <Field label="Labourer name" required error={errors.name} className="sm:col-span-2"><TextInput autoFocus value={form.name ?? ''} onChange={(e) => set({ name: e.target.value })} placeholder="Full name" /></Field>
           <Field label="Trade / skill">
-            <TextInput list="labour-trades" value={form.trade ?? ''} onChange={(e) => set({ trade: e.target.value })} placeholder="Mason, Helper…" />
+            <TextInput list="labour-trades" value={form.trade ?? ''} onChange={(e) => pickTrade(e.target.value)} placeholder="Mason, Helper…" />
             <datalist id="labour-trades">{LABOUR_TRADES.map((t) => <option key={t} value={t} />)}</datalist>
           </Field>
           <Field label="Phone" error={errors.phone}><TextInput type="tel" inputMode="tel" value={form.phone ?? ''} onChange={(e) => set({ phone: e.target.value })} placeholder="98765 43210" /></Field>
           <Field label="Wage per shift (₹)" required error={errors.daily_wage} hint="1 shift = a normal day's work; 1½ shifts pays 1.5 × this rate.">
-
-
-            <NumberInput value={form.daily_wage ?? 0} onValue={(v) => set({ daily_wage: v ?? 0, ...(otTouched ? {} : { overtime_rate: suggestedOvertimeRate(v ?? 0) }) })} className="font-semibold" />
+            <NumberInput value={form.daily_wage ?? 0} onValue={(v) => { setWageTouched(true); set({ daily_wage: v ?? 0, ...(otTouched ? {} : { overtime_rate: suggestedOvertimeRate(v ?? 0) }) }); }} className="font-semibold" />
           </Field>
           <Field label="Overtime rate (₹ per hour)" hint={`Optional, paid on top of shifts. Suggested ${inr(suggestedOvertimeRate(form.daily_wage ?? 0))} (wage per shift ÷ 8)`}>
             <NumberInput value={form.overtime_rate ?? 0} onValue={(v) => { setOtTouched(true); set({ overtime_rate: v ?? 0 }); }} allowEmpty placeholder="0" />
@@ -358,6 +365,112 @@ export function LabourPaymentDialog({ open, onOpenChange, labourer, payment }: {
           <Field label="Notes" className="sm:col-span-2"><TextInput value={form.notes ?? ''} onChange={(e) => set({ notes: e.target.value })} placeholder="e.g. Week 18–23 Nov settlement" /></Field>
           {error && <p className="rounded-xl bg-red-50 px-4 py-2.5 text-sm text-red-700 sm:col-span-2">{error}</p>}
           <div className="sm:col-span-2"><FormButtons busy={busy} onCancel={() => onOpenChange(false)} label={payment ? 'Save changes' : form.kind === 'Advance' ? 'Record advance' : 'Record payment'} /></div>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Wage per shift for a whole trade (e.g. every Helper)
+// ---------------------------------------------------------------------------
+
+export function TradeRateDialog({ open, onOpenChange, defaultTrade }: { open: boolean; onOpenChange: (o: boolean) => void; defaultTrade?: string }) {
+  const { labourers, attendance, refresh } = useData();
+  // one entry per trade, ignoring capitals and spaces
+  const trades = useMemo(() => {
+    const seen = new Map<string, string>();
+    labourers.filter((l) => l.active).forEach((l) => { const t = l.trade.trim(); if (t && !Array.from(seen.values()).some((x) => sameTrade(x, t))) seen.set(t.toLowerCase(), t); });
+    return Array.from(seen.values()).sort((a, b) => a.localeCompare(b));
+  }, [labourers]);
+  const [trade, setTrade] = useState('');
+  const [wage, setWage] = useState(0);
+  const [ot, setOt] = useState(0);
+  const [otTouched, setOtTouched] = useState(false);
+  const [apply, setApply] = useState(true);
+  const [from, setFrom] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  const choose = (t: string) => {
+    const rate = tradeRate(t, labourers) ?? 0;
+    setTrade(t);
+    setWage(rate);
+    setOt(suggestedOvertimeRate(rate));
+    setOtTouched(false);
+  };
+  useEffect(() => {
+    if (!open) return;
+    choose((defaultTrade && trades.find((t) => sameTrade(t, defaultTrade))) || trades.find((t) => sameTrade(t, 'Helper')) || trades[0] || '');
+    setApply(true);
+    setFrom(`${monthKey(todayISO())}-01`);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+
+  const members = useMemo(() => labourers.filter((l) => l.active && sameTrade(l.trade, trade)), [labourers, trade]);
+  const memberIds = useMemo(() => new Set(members.map((l) => l.id)), [members]);
+  const days = useMemo(() => (apply ? attendance.filter((a) => memberIds.has(a.labourer_id) && a.work_date >= from).length : 0), [attendance, memberIds, apply, from]);
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!members.length) return toast.error('Choose a trade that has active labourers');
+    if (!(wage > 0)) return toast.error('Enter the wage per shift');
+    setBusy(true);
+    try {
+      const res = await setLabourRates(members.map((l) => l.id), wage, ot, apply && from ? from : undefined);
+      await refresh('labourers', ...(res.days ? (['attendance', 'expenses'] as const) : []));
+      toast.success(`${res.labourers} ${trade}${res.labourers === 1 ? '' : 's'} now ${inr(wage, 0)} per shift${res.days ? ` · ${res.days} day${res.days === 1 ? '' : 's'} recalculated` : ''}`);
+      onOpenChange(false);
+    } catch (err) {
+      toast.error(friendlyError(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className={dialogClass}>
+        <DialogHeader>
+          <DialogTitle>Wage per shift by trade</DialogTitle>
+          <DialogDescription>Set one rate for every labourer of a trade, e.g. all Helpers at ₹700 per shift. New labourers of that trade start with this rate.</DialogDescription>
+        </DialogHeader>
+        <form onSubmit={submit} className="mt-2 grid gap-4 sm:grid-cols-2">
+          <Field label="Trade" className="sm:col-span-2">
+            <SelectNative value={trade} onChange={(e) => choose(e.target.value)}>
+              {!trades.length && <option value="">No active labourers yet</option>}
+              {trades.map((t) => <option key={t} value={t}>{t}</option>)}
+            </SelectNative>
+          </Field>
+          {members.length > 0 && (
+            <div className="rounded-xl bg-slate-50 p-3 text-sm sm:col-span-2">
+              <p className="mb-1.5 text-xs font-medium text-muted-foreground">{members.length} active {trade}{members.length === 1 ? '' : 's'} — current rate per shift</p>
+              <div className="flex flex-wrap gap-1.5">
+                {members.map((l) => <span key={l.id} className={cn('rounded-full px-2.5 py-1 text-xs ring-1 ring-inset', l.daily_wage === wage ? 'bg-white ring-slate-200' : 'bg-amber-50 text-amber-800 ring-amber-200')}>{l.name} · {inr(l.daily_wage, 0)}</span>)}
+              </div>
+            </div>
+          )}
+          <Field label="Wage per shift (₹)" required>
+            <NumberInput value={wage} onValue={(v) => { const w = v ?? 0; setWage(w); if (!otTouched) setOt(suggestedOvertimeRate(w)); }} className="text-lg font-semibold" autoFocus />
+          </Field>
+          <Field label="Overtime rate (₹ per hour)" hint="Optional, paid on top of shifts">
+            <NumberInput value={ot} onValue={(v) => { setOtTouched(true); setOt(v ?? 0); }} allowEmpty placeholder="0" />
+          </Field>
+          {wage > 0 && (
+            <div className="grid grid-cols-4 gap-2 rounded-xl bg-emerald-50 p-3 text-center sm:col-span-2">
+              {[0.5, 1, 1.5, 2].map((n) => <div key={n}><p className="text-[11px] text-emerald-800">{fmtShifts(n)}</p><p className="num text-sm font-semibold text-emerald-900">{inr(attendanceAmount(n, wage, 0, ot), 0)}</p></div>)}
+            </div>
+          )}
+          <div className="rounded-xl bg-sky-50 p-3 sm:col-span-2">
+            <Toggle checked={apply} onChange={setApply} label="Also recalculate days already marked" description="Each day keeps the rate it was marked with unless you recalculate it here." />
+            {apply && (
+              <div className="mt-2 flex flex-wrap items-center gap-2 text-sm">
+                <span className="text-slate-600">From</span>
+                <TextInput type="date" value={from} onChange={(e) => setFrom(e.target.value)} className="w-auto" />
+                <span className="text-xs text-muted-foreground">{days} day{days === 1 ? '' : 's'} will be recalculated at {inr(wage, 0)} per shift, and their expenses updated.</span>
+              </div>
+            )}
+          </div>
+          <div className="sm:col-span-2"><FormButtons busy={busy} onCancel={() => onOpenChange(false)} label={members.length ? `Set ${members.length} ${trade}${members.length === 1 ? '' : 's'} to ${inr(wage, 0)}` : 'Save'} /></div>
         </form>
       </DialogContent>
     </Dialog>

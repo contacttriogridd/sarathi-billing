@@ -52,6 +52,8 @@ export const LABOUR_TRADES = [
   'Mason', 'Helper', 'Carpenter', 'Bar bender', 'Centring', 'Electrician', 'Plumber', 'Painter', 'Tile layer',
   'Welder', 'Fabricator', 'Operator', 'Driver', 'Watchman', 'Supervisor', 'Other',
 ];
+/** Standard wage per shift by trade (lower-case keys). Only a starting suggestion when adding a labourer; the rate already paid to others of the same trade takes precedence. */
+export const STANDARD_WAGE_PER_SHIFT: Record<string, number> = { helper: 700 };
 export const ATTENDANCE_STATUSES = ['Present', 'Half day', 'Absent'] as const;
 export const LABOUR_PAYMENT_KINDS = ['Wages', 'Advance'] as const;
 export const GST_RATES = [0, 5, 12, 18, 28];

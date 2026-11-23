@@ -8,7 +8,7 @@ import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { useData } from '@/components/providers';
 import { Card, ConfirmDialog, EmptyState, LoadingPanel, PageHeader, SearchInput, Segmented, SelectNative, StatCard, TextInput, matches, useDebounced } from '@/components/common';
-import { AttendanceDialog, LabourPaymentDialog, LabourSetupNotice, LabourerDialog, ShiftButtons } from '@/components/labour-forms';
+import { AttendanceDialog, LabourPaymentDialog, LabourSetupNotice, LabourerDialog, ShiftButtons, TradeRateDialog } from '@/components/labour-forms';
 import { friendlyError, saveAttendance } from '@/lib/data';
 import { addDays, fmtDate, inr, initials, monthKey, todayISO } from '@/lib/format';
 import { attendanceAmount, fmtHours, fmtShifts, groupBy, labourBalance, shiftNumber, shiftTone, statusFromShifts, summariseAttendance, weekday } from '@/lib/labour';
@@ -36,6 +36,7 @@ function LabourInner() {
   const [busy, setBusy] = useState<Set<string>>(new Set());
   const [addOpen, setAddOpen] = useState(false);
   const [payOpen, setPayOpen] = useState(false);
+  const [ratesOpen, setRatesOpen] = useState(false);
   const [dayEdit, setDayEdit] = useState<Labourer | null>(null);
   const [confirmAll, setConfirmAll] = useState(false);
   const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -250,10 +251,11 @@ function LabourInner() {
             <StatCard label="Wages this month" value={inr(overview.monthWages, 0)} icon={IndianRupee} tone="sky" hint="Added to project expenses" />
             <StatCard label="Balance payable" value={inr(overview.payable, 0)} icon={Wallet} tone="orange" hint={overview.advances > 0 ? `Advances outstanding ${inr(overview.advances, 0)}` : 'Earned minus paid'} />
           </div>
-          <Card className="grid gap-2 p-3 sm:grid-cols-[1fr_200px_160px] sm:p-4">
+          <Card className="grid gap-2 p-3 sm:grid-cols-[1fr_200px_160px_auto] sm:p-4">
             <SearchInput value={query} onChange={setQuery} placeholder="Search name, ID, trade, phone, site…" />
             <SelectNative value={trade} onChange={(e) => setTrade(e.target.value)}><option value="">All trades</option>{trades.map((t) => <option key={t}>{t}</option>)}</SelectNative>
             <SelectNative value={state} onChange={(e) => setState(e.target.value as typeof state)}><option value="active">Active</option><option value="inactive">Inactive</option><option value="all">All labourers</option></SelectNative>
+            <button onClick={() => setRatesOpen(true)} className="flex h-11 items-center justify-center gap-2 rounded-xl border bg-white px-3.5 text-sm font-semibold hover:bg-slate-50 sm:h-10"><IndianRupee size={15} />Rates by trade</button>
           </Card>
           {!listed.length ? <Card><EmptyState icon={Users} title="No labourers match" description="Try another search or filter." /></Card> : (
             <Card className="divide-y overflow-hidden">
@@ -285,6 +287,7 @@ function LabourInner() {
 
       <LabourerDialog open={addOpen} onOpenChange={setAddOpen} defaultProjectId={projectId || null} />
       <LabourPaymentDialog open={payOpen} onOpenChange={setPayOpen} />
+      <TradeRateDialog open={ratesOpen} onOpenChange={setRatesOpen} defaultTrade={trade || undefined} />
       <AttendanceDialog open={!!dayEdit} onOpenChange={(o) => !o && setDayEdit(null)} labourer={dayEdit} date={date} record={dayEdit ? dayMap.get(dayEdit.id) ?? null : null} defaultProjectId={projectId || null}
         onSaved={(a) => setOverrides((m) => new Map(m).set(dayKey(a.labourer_id, a.work_date), a))} />
       <ConfirmDialog open={confirmAll} onOpenChange={setConfirmAll} title={`Mark ${unmarked.length} labourer${unmarked.length === 1 ? '' : 's'} for 1 shift?`} confirmLabel="Mark 1 shift"
