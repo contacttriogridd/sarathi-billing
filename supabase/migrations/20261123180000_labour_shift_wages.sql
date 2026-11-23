@@ -142,3 +142,15 @@ BEGIN
     ALTER TABLE public.labour_attendance ADD CONSTRAINT labour_attendance_shifts_check CHECK (shifts >= 0 AND shifts <= 3);
   END IF;
 END $$;
+
+-- Result row shown in the SQL Editor, so you can see the script ran to the end.
+SELECT CASE
+         WHEN EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'labour_expense_description'
+                       AND pg_get_function_identity_arguments(oid) LIKE '%p_status%')
+           THEN 'NOT FIXED: an old wage formula is still installed'
+         ELSE 'FIXED: labour wages = shifts × wage per shift'
+       END AS result,
+       (SELECT count(*) FROM public.labour_attendance) AS attendance_days,
+       (SELECT count(*) FROM public.labour_attendance
+         WHERE amount IS DISTINCT FROM round(daily_wage * GREATEST(shifts, 0)
+                 + CASE WHEN shifts > 0 THEN overtime_hours ELSE 0 END * overtime_rate, 2)) AS days_still_wrong;

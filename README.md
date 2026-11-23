@@ -22,7 +22,9 @@ SARATHI ASSOCIATES, Anitha Complex, Perumanallur, Tiruppur.
    Until then the *Services → Labour attendance* page shows a setup notice, and the rest of the app keeps working.
 
    **Wages wrong (e.g. ½, 1½ or 2 shifts paid as 1 shift)?** Run `20261123180000_labour_shift_wages.sql` again.
-   It restores the shift calculation and recalculates every wrongly saved day and its expense. All three scripts
+   It restores the shift calculation and recalculates every wrongly saved day and its expense. When it has run
+   to the end, the SQL Editor shows a result row: `FIXED: labour wages = shifts × wage per shift`, with
+   `days_still_wrong` = 0. All three scripts
    can be re-run in any order without undoing shift wages. The app shows a red "Wage calculation needs fixing"
    notice whenever it finds a wage that is not shifts × rate.
 3. **Authentication → URL Configuration:**
